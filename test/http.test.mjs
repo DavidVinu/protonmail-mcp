@@ -219,6 +219,28 @@ test('A tool call reaches himalaya with the expected argv', async () => {
   assert.deepEqual(JSON.parse(lines[0]).argv, ['mailbox', 'list', '--json']);
 });
 
+test('An unknown session id answers 404, so the client re-initializes', async () => {
+  // Sessions live in memory only, so every restart of this service throws all
+  // of them away. 404 is what tells a client "this session is gone, start a
+  // new one". Anything else and it keeps retrying a session that will never
+  // come back: measured 2026-09-06, a working connector stayed broken across
+  // a restart because the request fell through to a fresh, uninitialized
+  // transport and got `Bad Request: Server not initialized` forever.
+  const r = await post({
+    jsonrpc: '2.0', id: 9, method: 'tools/call',
+    params: { name: 'mailbox_list', arguments: {} },
+  }, { session: '00000000-0000-0000-0000-000000000000' });
+  assert.equal(r.status, 404, r.text.slice(0, 200));
+  assert.ok(!r.text.includes('not initialized'), r.text.slice(0, 200));
+});
+
+test('A fresh initialize still works without a session id', async () => {
+  // The counter-check: the 404 above must not block the normal path.
+  const r = await post(INIT);
+  assert.equal(r.status, 200);
+  assert.ok(r.session, 'a new session id is issued');
+});
+
 // ------------------------------------------------------------- start-up ----
 
 test('The server binds to the loopback only, never to 0.0.0.0', async () => {

@@ -127,6 +127,19 @@ function log(req, status, note = '') {
   );
 }
 
+/** Log once the response is actually finished, with the status it really had.
+ *
+ * Logging an assumed 200 before handing the request to the transport is a lie
+ * whenever the transport answers something else, and it hides exactly the
+ * failures this log exists to reveal. Found 2026-09-06: the journal showed
+ * nothing but 200 while every tool call from a stale session was answering
+ * 400.
+ */
+function logWhenDone(req, res, note = '') {
+  res.on('finish', () => log(req, res.statusCode, note));
+  res.on('close', () => { if (!res.writableEnded) log(req, res.statusCode, 'aborted'); });
+}
+
 const service = http.createServer(async (req, res) => {
   // Before the token check, and with the same answer either way -- otherwise
   // it would be an oracle. See the header comment for why this is a 404.
@@ -155,9 +168,26 @@ const service = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: 'not found' }));
     return;
   }
+  // An unknown session id must answer 404, not 400. 404 is what tells the
+  // client "this session is gone, start a new one"; anything else and it keeps
+  // retrying a session that will never come back. This matters after every
+  // restart of this service: sessions live in memory only, so a redeploy
+  // invalidates every one of them. Measured 2026-09-06 -- a connector that had
+  // worked stayed broken across a restart, answering
+  // `Bad Request: Server not initialized` to every tool call, because the
+  // request fell through to a fresh uninitialized transport.
+  const id = req.headers['mcp-session-id'];
+  if (typeof id === 'string' && id && !sessions.has(id)) {
+    log(req, 404, 'unknown session, client should re-initialize');
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      jsonrpc: '2.0', id: null,
+      error: { code: -32001, message: 'Session not found; re-initialize.' },
+    }));
+    return;
+  }
   try {
-    log(req, 200);
-    const id = req.headers['mcp-session-id'];
+    logWhenDone(req, res);
     const transport = (typeof id === 'string' && sessions.get(id))
       || newSession();
     await transport.handleRequest(req, res);
