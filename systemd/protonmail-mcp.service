@@ -1,0 +1,49 @@
+# User unit for the HTTP entry point.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/protonmail-mcp.service ~/.config/systemd/user/
+#   # adjust WorkingDirectory and ExecStart to where you cloned this
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now protonmail-mcp.service
+#
+# For the service to survive a reboot without anyone logging in:
+#   sudo loginctl enable-linger "$USER"
+#
+# Note that a user manager cannot use ProtectKernelTunables,
+# ProtectControlGroups or RestrictSUIDSGID: the unit then fails to start with
+# exit code 218/CAPABILITIES. The directives below are the ones that do work
+# in a user manager.
+
+[Unit]
+Description=Proton Mail MCP over HTTP (loopback only)
+Documentation=https://github.com/DavidVinu/protonmail-mcp
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/protonmail-mcp
+ExecStart=%h/code/protonmail-mcp/src/http.mjs
+Restart=always
+RestartSec=5
+
+# The token file location; see README.
+Environment=PROTONMAIL_MCP_TOKEN_FILE=%h/.config/protonmail-mcp/token
+Environment=PROTONMAIL_MCP_PORT=18790
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The attachment quarantine is the only place this server writes.
+ReadWritePaths=%h/.local/share/protonmail-mcp
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=default.target
