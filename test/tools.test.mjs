@@ -72,9 +72,26 @@ test('A folder name cannot smuggle in extra arguments', async () => {
     { stdout: '{"envelopes":[]}' });
   assert.deepEqual(seen.argv, [
     'envelope', 'list', '--mailbox', 'inbox --send --config /tmp/x.toml',
-    '--page-size', '20', '--json',
+    '--page-size', '20', '--has-attachment', '--json',
   ]);
   assert.equal(seen.argv.filter((a) => a === '--config').length, 0);
+});
+
+test('Envelope listings ask for the attachment column', async () => {
+  // himalaya reports has-attachment as null on every envelope unless the
+  // opt-in flag is set, and null reads as "no attachment" to anyone who does
+  // not know the flag exists. Regression found 2026-09-06: the wrapper that
+  // used to sit in front added the flag itself, so removing the wrapper
+  // silently removed the data.
+  for (const [name, args] of [
+    ['envelope_list', { mailbox: 'inbox' }],
+    ['envelope_search', { mailbox: 'inbox', query: 'from alice' }],
+  ]) {
+    const { seen } = await callServer([tool(name, args)],
+      { stdout: '{"envelopes":[]}' });
+    assert.ok(seen.argv.includes('--has-attachment'),
+      `${name}: ${seen.argv.join(' ')}`);
+  }
 });
 
 test('The server uses no shell', async () => {

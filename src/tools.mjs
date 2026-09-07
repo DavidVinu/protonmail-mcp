@@ -221,7 +221,11 @@ export function register(server, config = resolveConfig()) {
   }, async ({ mailbox, page, pageSize }) => {
     const argv = ['envelope', 'list', '--mailbox', mailbox];
     if (page !== undefined) argv.push('--page', String(page));
-    argv.push('--page-size', String(pageSize), '--json');
+    // --has-attachment is opt-in: without it himalaya reports has-attachment
+    // as null on every envelope, which reads as "no attachment" to a caller
+    // that does not know the flag exists. Measured cost on an IMAP backend:
+    // none worth mentioning.
+    argv.push('--page-size', String(pageSize), '--has-attachment', '--json');
     return call(config, argv, { soft: true });
   });
 
@@ -235,7 +239,7 @@ export function register(server, config = resolveConfig()) {
     },
   }, async ({ mailbox, query, pageSize }) => call(config,
     ['envelope', 'search', '--mailbox', mailbox, '--page-size', String(pageSize),
-      '--json', query], { soft: true },
+      '--has-attachment', '--json', query], { soft: true },
   ));
 
   server.registerTool('message_read', {
