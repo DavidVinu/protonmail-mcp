@@ -3,8 +3,19 @@
   "version": "1.0.0",
   "description": "A read-and-draft-only MCP server for Proton Mail, via Proton Mail Bridge and himalaya. Cannot send, cannot delete.",
   "license": "MIT",
+  "author": "David Vinu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DavidVinu/protonmail-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DavidVinu/protonmail-mcp/issues"
+  },
+  "homepage": "https://github.com/DavidVinu/protonmail-mcp#readme",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "protonmail-mcp": "./src/stdio.mjs",
     "protonmail-mcp-http": "./src/http.mjs"
@@ -12,7 +23,13 @@
   "scripts": {
     "test": "node --test"
   },
-  "keywords": ["mcp", "protonmail", "himalaya", "email", "claude"],
+  "keywords": [
+    "mcp",
+    "protonmail",
+    "himalaya",
+    "email",
+    "claude"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "zod": "^4.5.4"
