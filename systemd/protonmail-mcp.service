@@ -9,10 +9,23 @@
 # For the service to survive a reboot without anyone logging in:
 #   sudo loginctl enable-linger "$USER"
 #
-# Note that a user manager cannot use ProtectKernelTunables,
-# ProtectControlGroups or RestrictSUIDSGID: the unit then fails to start with
-# exit code 218/CAPABILITIES. The directives below are the ones that do work
-# in a user manager.
+# Measured on 2026-09-08, one directive at a time against a live user
+# manager, because the list that fails is not the one you would guess:
+#
+#   ProtectClock=yes           -> 218/CAPABILITIES
+#   CapabilityBoundingSet=     -> 218/CAPABILITIES
+#   MemoryDenyWriteExecute=yes -> node core-dumps with SIGTRAP: the JIT needs
+#                                 pages that are writable and executable
+#
+# Measure such directives against the REAL binary, never against /bin/true.
+# The first pass here used /bin/true, which does not JIT, so
+# MemoryDenyWriteExecute looked harmless and took the service down on the
+# next start.
+#
+# Everything below this comment starts fine in a --user manager, including
+# ProtectSystem=strict and ProtectHome=read-only. Do not add the three above
+# back without re-measuring; a unit that refuses to start is worse than one
+# directive less.
 
 [Unit]
 Description=Proton Mail MCP over HTTP (loopback only)
@@ -22,7 +35,9 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/code/protonmail-mcp
-ExecStart=%h/code/protonmail-mcp/src/http.mjs
+# Absolut, nicht ueber die Shebang: eine Unit hat kaum PATH,
+# und `/usr/bin/env node` findet dann nichts.
+ExecStart=%h/.local/bin/node %h/code/protonmail-mcp/src/http.mjs
 Restart=always
 RestartSec=5
 
@@ -36,14 +51,11 @@ ProtectSystem=strict
 ProtectHome=read-only
 # The attachment quarantine is the only place this server writes.
 ReadWritePaths=%h/.local/share/protonmail-mcp
-ProtectClock=yes
 ProtectHostname=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
-CapabilityBoundingSet=
 
 [Install]
 WantedBy=default.target
