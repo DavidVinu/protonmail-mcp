@@ -130,6 +130,19 @@ sends **no** `WWW-Authenticate` header on its `401`: both are invitations to a
 flow that does not exist here, and a client that accepts the invitation will
 try dynamic client registration and fail with a confusing error.
 
+Sessions live in memory only, so restarting the service throws all of them
+away. A client that comes back with its old session id gets a `404`, which is
+the signal to start a new one; answering `400` there leaves it retrying a
+session that will never come back, and a working connector then stays broken
+across every redeploy until someone reconnects it by hand. That is worth
+knowing if you put anything else in front of this server: pass the `404`
+through.
+
+The request log writes one line per request to stderr, with the status the
+response actually had. Without that there is no way to tell from outside
+whether a client is reaching the server at all — a request that fails at the
+door looks exactly like no request.
+
 ## Configuration
 
 All optional.
