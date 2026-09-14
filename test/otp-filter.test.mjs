@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { maskCodes, maskTable, redact, scrub } from '../src/otp-filter.mjs';
+import { MASK, REDACTED, maskCodes, maskTable, redact, scrub } from '../src/otp-filter.mjs';
 
 const REFERENCE = process.env.OTP_FILTER_PYTHON_REFERENCE;
 const referencePresent = Boolean(REFERENCE) && fs.existsSync(REFERENCE);
@@ -162,4 +162,71 @@ test('redact matches the Python original character for character',
       const theirs = expected[i].replace('[Einmalcode ausgeblendet]', '<REDACTED>');
       assert.equal(mine, theirs, `difference at ${JSON.stringify(input)}`);
     }
+  });
+
+// ---------------------------------------------------------------- sibling --
+//
+// The gmail-mcp server carries its own copy of this filter, deliberately: two
+// separate deployments with separate blast radii, so that an edit for one
+// cannot silently change the other. The price of that decision is drift, and
+// drift in a filter is invisible until a code reaches a model.
+//
+// So the copies are not shared, they are *compared* -- and by behaviour, not
+// by text, because part of the divergence is intended. `scrub` and
+// STRUCTURAL_FIELDS are excluded on purpose: Gmail identifies messages by
+// opaque hex strings where IMAP uses decimal UIDs, and that difference is the
+// whole reason the copies are not byte-identical.
+//
+//   OTP_FILTER_SIBLING=../gmail-mcp/src/otp-filter.mjs npm test
+
+const SIBLING = process.env.OTP_FILTER_SIBLING;
+const siblingPresent = Boolean(SIBLING) && fs.existsSync(SIBLING);
+
+test('the sibling server masks exactly the same characters',
+  { skip: siblingPresent ? false : 'OTP_FILTER_SIBLING not set' },
+  async () => {
+    const other = await import(path.resolve(SIBLING));
+    // One sample per branch of the announcement list, plus every exception
+    // it carves out. A corpus that misses a branch lets a change to that
+    // branch through: the first version of this test did exactly that, and a
+    // mutation of `passcode` survived it.
+    const samples = [...ALL,
+      // announcement words
+      'TAN 8821', 'OTP 4711', '2FA 123456', 'MFA-Code 99213',
+      'two factor 8821', 'two-factor 8821', '2-factor 8821',
+      'Zwei-Faktor 8821', 'zwei faktor 8821',
+      'one-time code 416107', 'one time password 416107',
+      'onetime passcode 416107', 'Einmal-Kennwort 416107',
+      'einmalpasswort 416107', 'passcode 416107',
+      'Zugangscode 416107', 'Bestaetigungscode 416107',
+      'Sicherheitscode 416107', 'Bestätigungscode 416107',
+      'login code 416107', 'log-in code 416107', 'log in code 416107',
+      'auth code 416107', 'authy code 416107', 'sms code 416107',
+      'pin code 416107', 'zugangs code 416107',
+      'verification code 416107', 'security code 416107',
+      'access code 416107', 'confirmation code 416107',
+      'Freigabe 416107',
+      // the exceptions: ordinary words ending in "code" that must survive
+      'Barcode 416107', 'QR-Code 416107', 'Quellcode 416107',
+      'Unicode 416107', 'Dresscode 416107', 'Postcode 416107',
+      'Zipcode 416107', 'Laendercode 416107', 'Ländercode 416107',
+      'Farbcode 416107', 'Morsecode 416107', 'Geocode 416107',
+      // the masking shapes themselves
+      'PIN 123 456', '8 4 2 1 9 9', 'AB12-CD34', 'X7K9M2',
+      // and the things that must never be touched
+      'Rechnung 1234,50 EUR', 'am 2026-09-14', 'am 14-09-26',
+      'Telefon (030) 123-4567', 'Jahr 2026', 'iPhone15',
+      '│ 7529 │ 416107 is your code │'];
+    for (const input of samples) {
+      assert.equal(other.maskCodes(input), maskCodes(input),
+        `maskCodes differs at ${JSON.stringify(input)}`);
+      assert.equal(other.redact(input), redact(input),
+        `redact differs at ${JSON.stringify(input)}`);
+      assert.equal(other.maskTable(input), maskTable(input),
+        `maskTable differs at ${JSON.stringify(input)}`);
+    }
+    // The masks themselves must agree, or one server hides a code behind a
+    // word the other does not use and the difference is invisible in review.
+    assert.equal(other.MASK, MASK);
+    assert.equal(other.REDACTED, REDACTED);
   });

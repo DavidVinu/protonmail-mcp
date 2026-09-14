@@ -214,19 +214,30 @@ details:
 npm test
 ```
 
-49 cases. Two of them are skipped unless you point them at extras:
+50 cases. Three of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character
 OTP_FILTER_PYTHON_REFERENCE=/path/to/einmalcode.py npm test
+
+# compares the filter against the copy in the sibling gmail-mcp server
+OTP_FILTER_SIBLING=/path/to/gmail-mcp/src/otp-filter.mjs npm test
 ```
 
-A third is skipped when `himalaya` is not installed: it runs every tool and
+The sibling check exists because the copy is deliberate, not accidental: two
+servers, two deployments, two blast radii, so an edit for one cannot silently
+change the other. The price of that is drift, and drift in a filter is
+invisible until a code reaches a model. So the copies are compared by
+**behaviour** rather than by text -- part of the divergence is intended, since
+Gmail identifies messages by opaque hex strings where IMAP uses decimal UIDs.
+`scrub` and `STRUCTURAL_FIELDS` are excluded for exactly that reason.
+
+A fourth is skipped when `himalaya` is not installed: it runs every tool and
 checks each option the server builds against `himalaya <subcommand> --help`.
 That case exists because two real defects got through a contract that only
 pinned *which* argv the server builds and never asked whether the other end
 understood it — a flag invented by an intermediate wrapper, and a `--all` on
-`message reply` that himalaya has never had. A fourth case checks the opposite
+`message reply` that himalaya has never had. A fifth case checks the opposite
 direction: that `--send`, `--config`, `--account`, `--backend` and `--attach`
 never appear.
 
