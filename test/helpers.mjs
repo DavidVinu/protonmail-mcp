@@ -30,15 +30,37 @@ if (argv.includes('read') && argv.includes('--raw')) {
   process.stdout.write(process.env.MOCK_RAW ?? '');
   process.exit(Number(process.env.MOCK_RAW_CODE ?? '0'));
 }
+// A download with MOCK_ATTACHMENT writes that file into --dir, like himalaya.
+if (argv.includes('download') && process.env.MOCK_ATTACHMENT) {
+  const a = JSON.parse(process.env.MOCK_ATTACHMENT);
+  const dir = argv[argv.indexOf('--dir') + 1];
+  fs.writeFileSync(dir + '/' + a.filename, a.content);
+  process.stdout.write(JSON.stringify({ attachments: [{ id: a.id,
+    filename: a.filename, mime: a.mime, size: a.content.length,
+    inline: false, path: dir + '/' + a.filename }] }));
+  process.exit(0);
+}
 process.stdout.write(process.env.MOCK_STDOUT ?? '');
 process.stderr.write(process.env.MOCK_STDERR ?? '');
 process.exit(Number(process.env.MOCK_CODE ?? '0'));
+`;
+
+// pdftotext stand-in: logs its argv like the himalaya mock, prints MOCK_PDF_TEXT.
+const PDFTOTEXT_MOCK = `#!${process.execPath}
+import fs from 'node:fs';
+fs.appendFileSync(process.env.MOCK_LOG,
+  JSON.stringify({ pdftotext: process.argv.slice(2) }) + '\\n');
+process.stdout.write(process.env.MOCK_PDF_TEXT ?? '');
 `;
 
 export const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protonmail-mcp-test-'));
 export const mock = path.join(tmp, 'himalaya-mock.mjs');
 fs.writeFileSync(mock, MOCK);
 fs.chmodSync(mock, 0o755);
+export const pdftotextMock = path.join(tmp, 'pdftotext-mock.mjs');
+fs.writeFileSync(pdftotextMock, PDFTOTEXT_MOCK);
+fs.chmodSync(pdftotextMock, 0o755);
+export const ATTACHMENT_DIR = path.join(tmp, 'attachments');
 
 // A home of its own. The recipient rule reads the account address from
 // himalaya's configuration; a contract must not depend on whose machine it
@@ -65,7 +87,8 @@ export function callServer(requests, { stdout = '', code = 0, env = {},
       ...process.env,
       HOME: TEST_HOME,
       HIMALAYA_BIN: mock,
-      PROTONMAIL_MCP_ATTACHMENT_DIR: path.join(tmp, 'attachments'),
+      PROTONMAIL_MCP_ATTACHMENT_DIR: ATTACHMENT_DIR,
+      PDFTOTEXT_BIN: pdftotextMock,
       MOCK_LOG: log,
       MOCK_STDOUT: stdout,
       MOCK_CODE: String(code),
@@ -94,9 +117,13 @@ export function callServer(requests, { stdout = '', code = 0, env = {},
       }).filter(Boolean);
       const calls = fs.existsSync(log)
         ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean)
-          .map((l) => JSON.parse(l))
+          .map((l) => JSON.parse(l)).filter((c) => c.argv)
         : [];
-      done({ answers, seen: calls.at(-1) ?? null, calls });
+      const pdftotext = fs.existsSync(log)
+        ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean)
+          .map((l) => JSON.parse(l)).filter((c) => c.pdftotext)
+        : [];
+      done({ answers, seen: calls.at(-1) ?? null, calls, pdftotext });
     });
   });
 }
@@ -115,8 +142,9 @@ export const EVERY_TOOL = [
   ['envelope_list', { mailbox: 'inbox' }],
   ['envelope_search', { mailbox: 'inbox', query: 'from alice' }],
   ['message_read', { id: '1', mailbox: 'inbox' }],
-  ['attachment_list', { id: '1', mailbox: 'inbox' }],
-  ['attachment_download', { id: '1', mailbox: 'inbox' }],
+  ['attachment_list', { id: '1', mailbox: 'inbox', inline: true }],
+  ['attachment_download', { id: '1', mailbox: 'inbox', parts: ['2', '3'] }],
+  ['attachment_read', { id: '1', mailbox: 'inbox', part: '2' }],
   ['flag_add', { id: '1', mailbox: 'inbox', flag: 'seen' }],
   ['flag_remove', { id: '1', mailbox: 'inbox', flag: 'seen' }],
   ['message_move', { id: '1' }],

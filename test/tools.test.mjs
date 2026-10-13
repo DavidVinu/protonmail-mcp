@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
-  EVERY_TOOL, OWN_ADDRESS, TO_OWN, answerTo, callServer, tool,
+  ATTACHMENT_DIR, EVERY_TOOL, OWN_ADDRESS, TO_OWN, answerTo, callServer, tool,
 } from './helpers.mjs';
 
 const HIMALAYA = process.env.HIMALAYA_BIN_FOR_TEST ?? 'himalaya';
@@ -50,7 +50,7 @@ test('The tool list contains no way to send', async () => {
     );
   }
   assert.deepEqual(names, [
-    'attachment_download', 'attachment_list', 'envelope_list',
+    'attachment_download', 'attachment_list', 'attachment_read', 'envelope_list',
     'envelope_search', 'flag_add', 'flag_remove', 'mailbox_list',
     'message_compose', 'message_forward', 'message_move', 'message_read',
     'message_reply',
@@ -316,4 +316,92 @@ test('Forwards are not subject to the rule', async () => {
     { id: '7', mailbox: 'inbox', body: 'T' })], { stdout: 'ok' });
   assert.ok(!answerTo(answers, 2).result?.isError);
   assert.equal(calls.length, 1, 'no read beforehand');
+});
+
+// ------------------------------------------------------------ attachments --
+
+const attachment = (filename, mime, content, id = '2') => ({
+  MOCK_ATTACHMENT: JSON.stringify({ id, filename, mime, content }),
+});
+
+test('attachment_list asks for part ids as JSON, inline parts on request', async () => {
+  const { seen } = await callServer(
+    [tool('attachment_list', { id: '7', mailbox: 'inbox', inline: true })],
+    { stdout: '{"attachments":[]}' });
+  assert.deepEqual(seen.argv,
+    ['attachment', 'list', '7', '--mailbox', 'inbox', '--inline', '--json']);
+});
+
+test('attachment_download fetches single parts into the quarantine', async () => {
+  const { seen } = await callServer([tool('attachment_download',
+    { id: '7', mailbox: 'inbox', parts: ['4', '9'] })], { stdout: '{}' });
+  assert.deepEqual(seen.argv, ['attachment', 'download', '7', '4', '9',
+    '--mailbox', 'inbox', '--dir', ATTACHMENT_DIR, '--json']);
+});
+
+test('A part id cannot become an option', async () => {
+  // Part ids are positionals; '--dir=/x' there would move the download out of
+  // the quarantine.
+  for (const [name, args] of [
+    ['attachment_download', { id: '7', parts: ['--dir=/tmp/x'] }],
+    ['attachment_read', { id: '7', part: '-d/tmp/x' }],
+  ]) {
+    const { answers, calls } = await callServer([tool(name, args)]);
+    const a = answerTo(answers, 2);
+    assert.ok(a.result?.isError || a.error, name);
+    assert.equal(calls.length, 0, `${name} must not reach himalaya`);
+  }
+});
+
+test('attachment_read returns a text attachment, filtered, and leaves nothing behind', async () => {
+  const { answers, seen } = await callServer(
+    [tool('attachment_read', { id: '7', mailbox: 'inbox', part: '2' })],
+    { env: attachment('notes.txt', 'text/plain',
+      'Meeting at 10:00 in room B.\nReference 416107 attached.') });
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.filename, 'notes.txt');
+  assert.ok(data.text.includes('Meeting at 10:00'), data.text);
+  assert.ok(!data.text.includes('416107'), 'the code must not get through');
+  const dir = seen.argv[seen.argv.indexOf('--dir') + 1];
+  assert.ok(dir.startsWith(ATTACHMENT_DIR + '/'), 'inside the quarantine');
+  assert.ok(!fs.existsSync(dir), 'the per-call directory is removed');
+});
+
+test('attachment_read extracts PDF text and filters it page by page', async () => {
+  const pages = ['Contract terms, page one.',
+    'Confirm with the TAN from your app.',
+    'Signed in Heidelberg.'];
+  const { answers, pdftotext } = await callServer(
+    [tool('attachment_read', { id: '7', part: '2', page: 2, pageCount: 2 })],
+    { env: { ...attachment('contract.pdf', 'application/pdf', '%PDF-1.4'),
+      MOCK_PDF_TEXT: pages.join('\f') + '\f' } });
+  assert.equal(pdftotext.length, 1);
+  assert.deepEqual(pdftotext[0].pdftotext.slice(0, 3), ['-enc', 'UTF-8', '-layout']);
+  assert.equal(pdftotext[0].pdftotext.at(-1), '-');
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.pages, 3);
+  assert.deepEqual(data.shown, [2, 3]);
+  const [two, three] = data.text.split('\f');
+  assert.ok(!two.includes('TAN'), 'the page announcing a code is blanked');
+  assert.equal(three, 'Signed in Heidelberg.', 'the other pages stay readable');
+  assert.ok(!data.text.includes('page one'), 'page 1 is not shown');
+});
+
+test('attachment_read refuses images', async () => {
+  // A 2FA setup mail carries its secret as a QR code; no text filter sees it.
+  const { answers, pdftotext } = await callServer(
+    [tool('attachment_read', { id: '7', part: '2' })],
+    { env: attachment('qr.png', 'image/png', 'PNGDATA') });
+  const a = answerTo(answers, 2).result;
+  assert.ok(a.isError);
+  assert.ok(!JSON.stringify(a).includes('PNGDATA'));
+  assert.equal(pdftotext.length, 0);
+});
+
+test('attachment_read ends softly when the mailbox is unreachable', async () => {
+  const { answers } = await callServer(
+    [tool('attachment_read', { id: '7', part: '2' })], BRIDGE_DOWN);
+  const a = answerTo(answers, 2).result;
+  assert.ok(!a.isError);
+  assert.equal(JSON.parse(a.content[0].text).soft, true);
 });

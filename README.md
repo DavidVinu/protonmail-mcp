@@ -9,7 +9,7 @@ It talks to [Proton Mail Bridge](https://proton.me/mail/bridge) through
 Bridge can serve, including the folders where imported Gmail or other mail
 lives.
 
-Two entry points, same twelve tools:
+Two entry points, same thirteen tools:
 
 | | |
 | - | - |
@@ -62,6 +62,7 @@ could not do it.
 
 - Node.js 20 or newer
 - `himalaya` v2 on `PATH` (or set `HIMALAYA_BIN`)
+- `pdftotext` (poppler-utils) for `attachment_read` on PDFs; optional
 - A working himalaya account. For Proton, that means Proton Mail Bridge running
   locally and an IMAP account pointed at it.
 
@@ -152,6 +153,7 @@ All optional.
 | `HIMALAYA_BIN` | `himalaya` | path to the binary |
 | `PROTONMAIL_MCP_HIMALAYA_CONFIG` | himalaya's own default | passed as `--config` |
 | `PROTONMAIL_MCP_ATTACHMENT_DIR` | `~/.local/share/protonmail-mcp/attachments` | download quarantine |
+| `PDFTOTEXT_BIN` | `pdftotext` | PDF text extraction for `attachment_read` |
 | `PROTONMAIL_MCP_TOKEN_FILE` | `~/.config/protonmail-mcp/token` | HTTP only |
 | `PROTONMAIL_MCP_PORT` | `18790` | HTTP only |
 | `PROTONMAIL_MCP_ADDRESS` | `127.0.0.1` | HTTP only; change at your own risk |
@@ -164,8 +166,9 @@ All optional.
 | `envelope_list` | envelopes of a folder | |
 | `envelope_search` | himalaya query syntax | |
 | `message_read` | one message; does **not** set the seen flag | |
-| `attachment_list` | attachment names | |
+| `attachment_list` | part ids, names, types, sizes | |
 | `attachment_download` | | files, into the quarantine only |
+| `attachment_read` | one attachment's text (text files, PDFs), paged and filtered | |
 | `message_reply` | | a draft, subject to the recipient rule |
 | `message_forward` | | a draft |
 | `message_compose` | | a draft |
@@ -204,6 +207,12 @@ details:
 - The recipient rule fails closed: if the original cannot be read, no draft is
   created. A rule that quietly stops applying when the mailbox is down is not a
   rule.
+- `attachment_read` returns text only. Images are refused: a 2FA setup mail
+  carries its secret as a QR code, and no text filter sees into a picture.
+  Office formats and scanned PDFs are refused too; `attachment_download` still
+  stores them for you.
+- On attachments the filter runs per PDF page rather than on the whole
+  document, so one page that mentions a TAN does not blank the entire contract.
 - The filter's word list is bilingual (English and German), because the mailbox
   it was built for is. Adding a language means extending `OTP_WORDS` in
   `src/otp-filter.mjs`.
@@ -214,7 +223,7 @@ details:
 npm test
 ```
 
-50 cases. Three of them are skipped unless you point them at extras:
+57 cases. Three of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

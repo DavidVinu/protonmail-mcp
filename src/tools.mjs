@@ -1,7 +1,7 @@
 // The tools of the Proton Mail MCP server, shared by the stdio and HTTP entry
 // points. Neither the transport nor the process environment is decided here.
 //
-// WHAT THE BOUNDARY IS. This server offers twelve fixed tools. Every argv is
+// WHAT THE BOUNDARY IS. This server offers thirteen fixed tools. Every argv is
 // assembled from typed parameters; there is no free-form command, no send
 // path, no delete path, and no shell. A permission system could express all
 // of that -- it is a question of WHETHER a tool may run.
@@ -27,11 +27,18 @@
 //     PROTONMAIL_MCP_HIMALAYA_CONFIG.
 
 import { spawn } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { redact, scrub } from './otp-filter.mjs';
 
 const FLAGS = ['seen', 'answered', 'flagged'];
+
+// A MIME part position. Digits only, because it lands in argv as a positional:
+// anything starting with '-' would be read as an option instead.
+const PART_ID = z.string().regex(/^\d+$/);
+
+const MAX_TEXT = 200000;
 
 const DEFAULT_HIMALAYA_CONFIG = '.config/himalaya/config.toml';
 
@@ -51,6 +58,7 @@ export function resolveConfig(env = process.env) {
     configPath: env.PROTONMAIL_MCP_HIMALAYA_CONFIG || null,
     attachmentDir: env.PROTONMAIL_MCP_ATTACHMENT_DIR
       || `${home}/.local/share/protonmail-mcp/attachments`,
+    pdftotext: env.PDFTOTEXT_BIN || 'pdftotext',
     home,
   };
 }
@@ -62,14 +70,18 @@ export function resolveConfig(env = process.env) {
  * HOME stays: himalaya finds its configuration through it.
  */
 function run(config, argv) {
+  const full = config.configPath
+    ? ['--config', config.configPath, ...argv]
+    : argv;
+  return exec(config.himalaya, full);
+}
+
+function exec(bin, argv, { timeout } = {}) {
   return new Promise((done) => {
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('HIMALAYA_')),
     );
-    const full = config.configPath
-      ? ['--config', config.configPath, ...argv]
-      : argv;
-    const child = spawn(config.himalaya, full, { env });
+    const child = spawn(bin, argv, { env, timeout });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => { out += d; });
@@ -96,33 +108,7 @@ const CONNECTION_ERRORS = [
 /** Run, filter, and shape the result as MCP content. A failure is never swallowed. */
 async function call(config, argv, { soft = false } = {}) {
   const { code, out, err } = await run(config, argv);
-
-  if (code !== 0) {
-    const lower = (out + err).toLowerCase();
-    const hit = soft && CONNECTION_ERRORS.find((m) => lower.includes(m));
-    if (hit) {
-      // Deliberately WITHOUT an empty `envelopes`. A caller that only looks at
-      // that field should fail rather than read this as "no mail". Turning a
-      // detected outage into an undetected one is the worse failure.
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            soft: true,
-            note: `Mailbox unreachable (${hit}); the data from this query is missing.`,
-          }),
-        }],
-      };
-    }
-    return {
-      isError: true,
-      content: [{
-        type: 'text',
-        text: `himalaya exited with code ${code}.\n`
-          + redact((err || out).slice(0, 4000)),
-      }],
-    };
-  }
+  if (code !== 0) return failure(code, out, err, soft);
 
   // Every output is filtered before it reaches the model. JSON field by field,
   // so the structure and the IMAP UIDs survive; anything else as plain text.
@@ -132,7 +118,35 @@ async function call(config, argv, { soft = false } = {}) {
   } catch {
     text = redact(text);
   }
-  return { content: [{ type: 'text', text: text.slice(0, 200000) }] };
+  return { content: [{ type: 'text', text: text.slice(0, MAX_TEXT) }] };
+}
+
+/** Shape a failed himalaya run: soft for a lost connection on a read path. */
+function failure(code, out, err, soft) {
+  const lower = (out + err).toLowerCase();
+  const hit = soft && CONNECTION_ERRORS.find((m) => lower.includes(m));
+  if (hit) {
+    // Deliberately WITHOUT an empty `envelopes`. A caller that only looks at
+    // that field should fail rather than read this as "no mail". Turning a
+    // detected outage into an undetected one is the worse failure.
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          soft: true,
+          note: `Mailbox unreachable (${hit}); the data from this query is missing.`,
+        }),
+      }],
+    };
+  }
+  return {
+    isError: true,
+    content: [{
+      type: 'text',
+      text: `himalaya exited with code ${code}.\n`
+        + redact((err || out).slice(0, 4000)),
+    }],
+  };
 }
 
 /** The address a draft would be sent from.
@@ -199,6 +213,38 @@ async function checkRecipient(config, id, mailbox) {
   };
 }
 
+const TEXT_TYPES = /^(text\/|application\/(json|xml|csv|ics|.*\+xml|.*\+json)$)/;
+
+/** Turn one downloaded attachment into text pages, or say why it cannot be.
+ *
+ * Only what can pass the one-time-code filter comes back. Images in
+ * particular do not: a 2FA setup mail carries its secret as a QR code, and no
+ * text filter sees into a picture.
+ */
+async function extract(config, file, mime) {
+  if (TEXT_TYPES.test(mime)) {
+    return { pages: [await readFile(file, 'utf8')] };
+  }
+  if (mime === 'application/pdf' || file.toLowerCase().endsWith('.pdf')) {
+    const { code, out, err } = await exec(config.pdftotext,
+      ['-enc', 'UTF-8', '-layout', file, '-'],
+      // pdftotext parses bytes the sender chose; a crafted PDF must not hang it.
+      { timeout: 60000 });
+    if (code !== 0) {
+      return { error: `pdftotext exited with code ${code}.\n${redact(err.slice(0, 300))}` };
+    }
+    // pdftotext ends every page with a form feed.
+    const pages = out.split('\f');
+    if (pages.at(-1) === '') pages.pop();
+    if (!pages.some((p) => p.trim())) {
+      return { error: 'This PDF has no text layer (probably a scan).' };
+    }
+    return { pages };
+  }
+  return { error: `Attachments of type ${mime} cannot be read as text. `
+    + 'attachment_download stores it in the quarantine for the user.' };
+}
+
 export function register(server, config = resolveConfig()) {
   // ------------------------------------------------------------- reading ----
   // Read paths are soft: if the mail bridge drops out mid-run, a note comes
@@ -256,23 +302,86 @@ export function register(server, config = resolveConfig()) {
   });
 
   server.registerTool('attachment_list', {
-    description: 'List the attachments of a message.',
-    inputSchema: { id: z.string().min(1), mailbox: z.string().default('inbox') },
-  }, async ({ id, mailbox }) => call(config,
-    ['attachment', 'list', id, '--mailbox', mailbox], { soft: true },
-  ));
+    description: 'List the attachments of a message with their part ids, '
+      + 'file names, types and sizes.',
+    inputSchema: {
+      id: z.string().min(1),
+      mailbox: z.string().default('inbox'),
+      inline: z.boolean().default(false)
+        .describe('also list inline parts, e.g. images embedded in HTML'),
+    },
+  }, async ({ id, mailbox, inline }) => {
+    const argv = ['attachment', 'list', id, '--mailbox', mailbox];
+    if (inline) argv.push('--inline');
+    argv.push('--json');
+    return call(config, argv, { soft: true });
+  });
 
   server.registerTool('attachment_download', {
     description: 'Download attachments. They always land in the quarantine '
       + 'directory and nowhere else; the answer names the path.',
-    inputSchema: { id: z.string().min(1), mailbox: z.string().default('inbox') },
-  }, async ({ id, mailbox }) => {
+    inputSchema: {
+      id: z.string().min(1),
+      mailbox: z.string().default('inbox'),
+      parts: z.array(PART_ID).optional()
+        .describe('part ids from attachment_list; all attachments if omitted'),
+    },
+  }, async ({ id, mailbox, parts = [] }) => {
     // Both the file name and the content are chosen by whoever sent the mail.
     // The directory therefore sits outside PATH, and the caller cannot pick it.
     await mkdir(config.attachmentDir, { recursive: true });
     return call(config,
-      ['attachment', 'download', id, '--mailbox', mailbox,
-        '--dir', config.attachmentDir], { soft: true });
+      ['attachment', 'download', id, ...parts, '--mailbox', mailbox,
+        '--dir', config.attachmentDir, '--json'], { soft: true });
+  });
+
+  server.registerTool('attachment_read', {
+    description: 'Read the content of one attachment as text: text files and '
+      + 'PDFs with a text layer. Images and other binary formats are refused. '
+      + 'Long documents come back in pages; use page and pageCount to go on.',
+    inputSchema: {
+      id: z.string().min(1),
+      mailbox: z.string().default('inbox'),
+      part: PART_ID.describe('part id from attachment_list'),
+      page: z.number().int().min(1).default(1),
+      pageCount: z.number().int().min(1).max(50).default(10),
+    },
+  }, async ({ id, mailbox, part, page, pageCount }) => {
+    // A directory of its own per call, inside the quarantine, so the file is
+    // found without trusting the name the sender chose, and is gone afterwards.
+    await mkdir(config.attachmentDir, { recursive: true });
+    const dir = await mkdtemp(join(config.attachmentDir, '.read-'));
+    try {
+      const { code, out, err } = await run(config,
+        ['attachment', 'download', id, part, '--mailbox', mailbox,
+          '--dir', dir, '--json']);
+      if (code !== 0) return failure(code, out, err, true);
+      const meta = JSON.parse(out).attachments?.find((a) => a.id === part);
+      const files = await readdir(dir);
+      if (!meta || files.length !== 1) {
+        return { isError: true, content: [{ type: 'text',
+          text: `Message ${id} has no attachment with part id ${part}.` }] };
+      }
+      const result = await extract(config, join(dir, files[0]), meta.mime);
+      if (result.error) {
+        return { isError: true, content: [{ type: 'text', text: result.error }] };
+      }
+      // The filter runs per page. Its second layer blanks a whole string that
+      // announces a code; on a whole contract that would hide every page
+      // because one of them mentions a TAN.
+      const last = Math.min(result.pages.length, page - 1 + pageCount);
+      const shown = result.pages.slice(page - 1, last).map(redact).join('\f');
+      return { content: [{ type: 'text', text: JSON.stringify({
+        ...scrub({ filename: meta.filename, mime: meta.mime }),
+        size: meta.size,
+        pages: result.pages.length,
+        shown: [page, last],
+        text: shown.slice(0, MAX_TEXT),
+        truncated: shown.length > MAX_TEXT,
+      }) }] };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   // ------------------------------------------------------------- writing ----

@@ -182,7 +182,7 @@ test('The discovery paths give nothing away about the token', async () => {
 
 // ----------------------------------------------------------------- tools ----
 
-test('The server offers the same twelve tools as stdio', async () => {
+test('The server offers the same thirteen tools as stdio', async () => {
   const init = await post(INIT);
   assert.equal(init.status, 200);
   const session = init.session;
@@ -195,7 +195,7 @@ test('The server offers the same twelve tools as stdio', async () => {
   assert.ok(d, list.text.slice(0, 300));
   const names = d.result.tools.map((x) => x.name).sort();
   assert.deepEqual(names, [
-    'attachment_download', 'attachment_list', 'envelope_list',
+    'attachment_download', 'attachment_list', 'attachment_read', 'envelope_list',
     'envelope_search', 'flag_add', 'flag_remove', 'mailbox_list',
     'message_compose', 'message_forward', 'message_move', 'message_read',
     'message_reply',
