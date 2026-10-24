@@ -241,6 +241,42 @@ test('A fresh initialize still works without a session id', async () => {
   assert.ok(r.session, 'a new session id is issued');
 });
 
+test('A request without a session id is served, not refused', async () => {
+  // Measured 2026-10-24: about a quarter of all POSTs from Claude's connector
+  // carried no session id and were not an initialize. They got
+  // `Bad Request: Server not initialized`; some were followed by a fresh
+  // initialize, many were not and simply failed.
+  const r = await post({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} });
+  assert.equal(r.status, 200, r.text.slice(0, 200));
+  const d = payload(r.text, 4);
+  assert.ok(d?.result?.tools?.length, r.text.slice(0, 300));
+  assert.equal(r.session, null, 'a one-shot request opens no session');
+});
+
+test('A sessionless tool call reaches himalaya', async () => {
+  fs.rmSync(MOCK_LOG, { force: true });
+  const r = await post({
+    jsonrpc: '2.0', id: 5, method: 'tools/call',
+    params: { name: 'mailbox_list', arguments: {} },
+  });
+  assert.equal(r.status, 200, r.text.slice(0, 200));
+  const lines = fs.readFileSync(MOCK_LOG, 'utf8').trim().split('\n');
+  assert.deepEqual(JSON.parse(lines[0]).argv, ['mailbox', 'list', '--json']);
+});
+
+test('A body that is not JSON answers a JSON-RPC parse error', async () => {
+  const res = await fetch(base + '/mcp', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+    },
+    body: '{not json',
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error.code, -32700);
+});
+
 // ------------------------------------------------------------- start-up ----
 
 test('The server binds to the loopback only, never to 0.0.0.0', async () => {

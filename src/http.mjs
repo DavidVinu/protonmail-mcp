@@ -110,6 +110,40 @@ function newSession() {
   return transport;
 }
 
+/** A transport without session management, for exactly one request.
+ *
+ * Claude's connector sends some requests with no session id and without a
+ * prior initialize. A session transport answers those with 400 `Server not
+ * initialized`; measured 2026-10-24, that was about a quarter of all POSTs.
+ * The tools keep no state between calls, so such a request can simply be
+ * served on its own.
+ */
+function oneShot(res) {
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+  const server = new McpServer({ name: 'protonmail', version: '1.0.0' });
+  register(server, CONFIG);
+  server.connect(transport);
+  res.on('close', () => { transport.close(); server.close(); });
+  return transport;
+}
+
+/** Read and parse a request body; undefined if it is not JSON. */
+async function readJson(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function isInitialize(body) {
+  return [body].flat().some((m) => m?.method === 'initialize');
+}
+
 /** One line per request to stderr, i.e. to the journal.
  *
  * Without this there is no way to tell from the outside whether a client is
@@ -188,9 +222,27 @@ const service = http.createServer(async (req, res) => {
   }
   try {
     logWhenDone(req, res);
-    const transport = (typeof id === 'string' && sessions.get(id))
-      || newSession();
-    await transport.handleRequest(req, res);
+    if (typeof id === 'string' && id) {
+      await sessions.get(id).handleRequest(req, res);
+      return;
+    }
+    if (req.method !== 'POST') {
+      await newSession().handleRequest(req, res);
+      return;
+    }
+    // Without a session id the body decides: an initialize opens a session,
+    // anything else is served once (see oneShot).
+    const body = await readJson(req);
+    if (body === undefined) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32700, message: 'Parse error: Invalid JSON' },
+      }));
+      return;
+    }
+    const transport = isInitialize(body) ? newSession() : oneShot(res);
+    await transport.handleRequest(req, res, body);
   } catch (error) {
     process.stderr.write(`protonmail-mcp: ${error?.message ?? error}\n`);
     if (!res.headersSent) {
