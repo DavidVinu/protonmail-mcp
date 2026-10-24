@@ -170,8 +170,51 @@ function log(req, status, note = '') {
  * 400.
  */
 function logWhenDone(req, res, note = '') {
-  res.on('finish', () => log(req, res.statusCode, note));
+  const reason = rejectionReason(res);
+  res.on('finish', () => log(req, res.statusCode,
+    [note, reason() && `error="${reason()}"`].filter(Boolean).join(' ')));
   res.on('close', () => { if (!res.writableEnded) log(req, res.statusCode, 'aborted'); });
+}
+
+/** What a request was, without what it said: method, session, protocol.
+ *
+ * Found 2026-10-24: a quarter of the connector's POSTs answered 400, and the
+ * journal could not tell which kind of request they were.
+ */
+function describe(req, body) {
+  const methods = body === undefined ? [] : [body].flat()
+    .map((m) => m?.method ?? (m && ('result' in m || 'error' in m) ? 'response' : '?'));
+  return [
+    methods.length ? `method=${methods.join(',')}` : '',
+    `session=${req.headers['mcp-session-id'] ? 'yes' : 'no'}`,
+    `proto=${req.headers['mcp-protocol-version'] ?? '-'}`,
+  ].filter(Boolean).join(' ');
+}
+
+/** Keep the JSON-RPC error message of a 4xx/5xx answer, for the log.
+ *
+ * These are the transport's own messages (`Server already initialized` and
+ * the like), never mail content: a tool result is always a 200.
+ */
+function rejectionReason(res) {
+  let text = '';
+  const keep = (chunk) => {
+    if (res.statusCode < 400 || !chunk || text.length >= 1024) return;
+    text += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+  };
+  const { write, end } = res;
+  res.write = function (chunk, ...rest) { keep(chunk); return write.call(this, chunk, ...rest); };
+  res.end = function (chunk, ...rest) {
+    if (typeof chunk !== 'function') keep(chunk);
+    return end.call(this, chunk, ...rest);
+  };
+  return () => {
+    try {
+      return String(JSON.parse(text).error?.message ?? '').slice(0, 160);
+    } catch {
+      return '';
+    }
+  };
 }
 
 const service = http.createServer(async (req, res) => {
@@ -212,7 +255,7 @@ const service = http.createServer(async (req, res) => {
   // request fell through to a fresh uninitialized transport.
   const id = req.headers['mcp-session-id'];
   if (typeof id === 'string' && id && !sessions.has(id)) {
-    log(req, 404, 'unknown session, client should re-initialize');
+    log(req, 404, `${describe(req)} unknown session, client should re-initialize`);
     res.writeHead(404, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       jsonrpc: '2.0', id: null,
@@ -221,9 +264,19 @@ const service = http.createServer(async (req, res) => {
     return;
   }
   try {
-    logWhenDone(req, res);
+    // Parsed here rather than in the transport, so the log can name the method.
+    const body = req.method === 'POST' ? await readJson(req) : undefined;
+    logWhenDone(req, res, describe(req, body));
+    if (req.method === 'POST' && body === undefined) {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32700, message: 'Parse error: Invalid JSON' },
+      }));
+      return;
+    }
     if (typeof id === 'string' && id) {
-      await sessions.get(id).handleRequest(req, res);
+      await sessions.get(id).handleRequest(req, res, body);
       return;
     }
     if (req.method !== 'POST') {
@@ -232,15 +285,6 @@ const service = http.createServer(async (req, res) => {
     }
     // Without a session id the body decides: an initialize opens a session,
     // anything else is served once (see oneShot).
-    const body = await readJson(req);
-    if (body === undefined) {
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        jsonrpc: '2.0', id: null,
-        error: { code: -32700, message: 'Parse error: Invalid JSON' },
-      }));
-      return;
-    }
     const transport = isInitialize(body) ? newSession() : oneShot(res);
     await transport.handleRequest(req, res, body);
   } catch (error) {

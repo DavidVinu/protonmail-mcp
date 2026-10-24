@@ -46,6 +46,7 @@ function start(env = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stderr = '';
+    p.output = () => stderr;
     const timer = setTimeout(() => fail(
       new Error('server never reported ready: ' + stderr)), 15000);
     p.stderr.on('data', (d) => {
@@ -275,6 +276,24 @@ test('A body that is not JSON answers a JSON-RPC parse error', async () => {
   });
   assert.equal(res.status, 400);
   assert.equal((await res.json()).error.code, -32700);
+});
+
+test('A rejected request is logged with its method and the reason', async () => {
+  // Measured 2026-10-24: 400s kept coming from the connector after the
+  // sessionless fix, and the journal said nothing about why.
+  const init = await post(INIT);
+  const r = await post(INIT, { session: init.session });
+  assert.equal(r.status, 400, r.text.slice(0, 200));
+  // The line is written once the response has finished, which can be a
+  // moment after the client already has it.
+  let line = '';
+  for (let i = 0; i < 50 && !line; i++) {
+    line = child.output().split('\n')
+      .findLast((l) => l.includes(': 400 POST') && l.includes('initialize')) ?? '';
+    if (!line) await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.match(line, /^protonmail-mcp: 400 POST \/mcp .* method=initialize session=yes/);
+  assert.match(line, /error="Invalid Request: Server already initialized"/);
 });
 
 // ------------------------------------------------------------- start-up ----
