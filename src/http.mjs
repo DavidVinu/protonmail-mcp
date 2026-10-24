@@ -112,9 +112,13 @@ function newSession() {
 
 /** A transport without session management, for exactly one request.
  *
- * Claude's connector sends some requests with no session id and without a
- * prior initialize. A session transport answers those with 400 `Server not
- * initialized`; measured 2026-10-24, that was about a quarter of all POSTs.
+ * Claude's connector opens with `server/discover` on protocol 2026-07-28,
+ * without a session, and falls back to initialize when the server names the
+ * versions it does support. A session transport never gets that far: it
+ * answers `Server not initialized`, which is not the fallback signal, and
+ * measured 2026-10-24 only about half of those were followed by an
+ * initialize. Served here, the request reaches the version check and gets
+ * `Unsupported protocol version` with the list, as the client expects.
  * The tools keep no state between calls, so such a request can simply be
  * served on its own.
  */
@@ -179,7 +183,7 @@ function logWhenDone(req, res, note = '') {
 /** What a request was, without what it said: method, session, protocol.
  *
  * Found 2026-10-24: a quarter of the connector's POSTs answered 400, and the
- * journal could not tell which kind of request they were.
+ * journal could not tell which kind of request they were (see oneShot).
  */
 function describe(req, body) {
   const methods = body === undefined ? [] : [body].flat()

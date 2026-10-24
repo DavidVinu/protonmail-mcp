@@ -243,10 +243,8 @@ test('A fresh initialize still works without a session id', async () => {
 });
 
 test('A request without a session id is served, not refused', async () => {
-  // Measured 2026-10-24: about a quarter of all POSTs from Claude's connector
-  // carried no session id and were not an initialize. They got
-  // `Bad Request: Server not initialized`; some were followed by a fresh
-  // initialize, many were not and simply failed.
+  // Without a session a request must not stop at `Server not initialized`
+  // (see oneShot in src/http.mjs).
   const r = await post({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} });
   assert.equal(r.status, 200, r.text.slice(0, 200));
   const d = payload(r.text, 4);
@@ -265,6 +263,23 @@ test('A sessionless tool call reaches himalaya', async () => {
   assert.deepEqual(JSON.parse(lines[0]).argv, ['mailbox', 'list', '--json']);
 });
 
+test('A protocol the SDK does not speak answers 400 with the versions it does', async () => {
+  // Claude's connector opens with `server/discover` on 2026-07-28 and falls
+  // back to initialize when the answer lists the versions it can use instead.
+  // Measured 2026-10-24: that 400 was a quarter of all POSTs, and harmless.
+  const res = await fetch(base + '/mcp', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'mcp-protocol-version': '2026-07-28',
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'server/discover' }),
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /Unsupported protocol version.*2025-11-25/);
+});
+
 test('A body that is not JSON answers a JSON-RPC parse error', async () => {
   const res = await fetch(base + '/mcp', {
     method: 'POST',
@@ -279,8 +294,8 @@ test('A body that is not JSON answers a JSON-RPC parse error', async () => {
 });
 
 test('A rejected request is logged with its method and the reason', async () => {
-  // Measured 2026-10-24: 400s kept coming from the connector after the
-  // sessionless fix, and the journal said nothing about why.
+  // Measured 2026-10-24: a quarter of the connector's POSTs answered 400 and
+  // the journal said nothing about why.
   const init = await post(INIT);
   const r = await post(INIT, { session: init.session });
   assert.equal(r.status, 400, r.text.slice(0, 200));
@@ -289,7 +304,7 @@ test('A rejected request is logged with its method and the reason', async () => 
   let line = '';
   for (let i = 0; i < 50 && !line; i++) {
     line = child.output().split('\n')
-      .findLast((l) => l.includes(': 400 POST') && l.includes('initialize')) ?? '';
+      .findLast((l) => l.includes(': 400 POST') && l.includes('method=initialize')) ?? '';
     if (!line) await new Promise((r) => setTimeout(r, 20));
   }
   assert.match(line, /^protonmail-mcp: 400 POST \/mcp .* method=initialize session=yes/);
