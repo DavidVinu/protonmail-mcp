@@ -69,12 +69,13 @@ function phoneSpans(text) {
   INTERNATIONAL.lastIndex = 0;
   for (const hit of text.matchAll(INTERNATIONAL)) {
     const groups = hit[0].match(/[ \/-]?\(?\d+\)?/g);
+    const limit = /^\+1(?!\d)/.test(hit[0]) ? 11 : MAX_PHONE_DIGITS;
     let length = 1;
     let digits = 0;
     let previous = 0;
     for (const group of groups) {
       const count = group.replace(/\D/g, '').length;
-      if (digits + count > MAX_PHONE_DIGITS) break;
+      if (digits + count > limit) break;
       if (digits && group[0] === ' ' && previous >= 6) break;
       length += group.length;
       digits += count;
@@ -151,7 +152,7 @@ const KEYWORDS = [
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
   String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)`,
   `verif[${L}]*`, `authenti[${L}]*`, CODE_WORD, 'guard',
-  String.raw`(?:sign|log)[-\s]?in`,
+  String.raw`(?:use|enter|gib|nutze|verwende)[^\S\n]+(?:this|these|the[^\S\n]+following|following|diesen?|folgenden?)`,
   String.raw`(?:confirm|best(?:ä|ae)tig)[${L}]*[^\S\n]+(?:(?:sie|your|ihre?|deine?)[^\S\n]+)?(?:e-?mail|account|konto|identity|identität|login|anmeldung)`,
 ];
 const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`, 'iu');
@@ -171,7 +172,7 @@ const ANNOUNCES = new RegExp(STRONG, 'iu');
 const SUBJECT_ONLY = new RegExp(`(?<![${L}])(?:sign[-\\s]?in|log[-\\s]?in|verify|verifizier[${L}]*)(?![${L}])`, 'iu');
 
 const SENDER_TOKENS = new Set(['verify', 'verification', 'otp', '2fa',
-  'mfa', 'auth', 'signin', 'accountprotection', 'passcode', 'security']);
+  'mfa', 'auth', 'signin', 'accountprotection', 'passcode']);
 
 const LABEL_TAIL = String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*:?|:)[^\S\n]*`;
 const LABELLED = new RegExp(
@@ -182,7 +183,14 @@ const LABELLED = new RegExp(
 const STRONG_LABELLED = new RegExp(
   STRONG + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*)?:[^\S\n]*([a-z0-9](?:-?[a-z0-9]){3,11})${END}`, 'giu');
 const LONG_NUMBER = new RegExp(`${START}(\\d{9,10})${END}`, 'g');
-const BOXED = new RegExp(String.raw`(?<![A-Za-z0-9])[A-Z0-9](?:(?:\s|<[^<>]*>|&nbsp;)+[A-Z0-9](?![A-Za-z0-9])){3,9}`, 'g');
+const BOX_GAP = String.raw`(?:\s|<[^<>]*>|&nbsp;)+`;
+const BOXED = new RegExp(STRONG + String.raw`(?:\s|<[^<>]*>|&nbsp;|[:–-])*(?:(?:is|ist|lautet)(?![${L}])(?:\s|<[^<>]*>|&nbsp;|:)*)?`
+  + String.raw`([A-Z0-9](?:${BOX_GAP}[A-Z0-9](?![A-Za-z0-9])){3,9})`, 'giu');
+const PROSE = new Set(['please', 'contact', 'see', 'below', 'above', 'follows', 'none', 'not',
+  'required', 'optional', 'sent', 'expired', 'invalid', 'bitte', 'siehe', 'unten', 'oben', 'folgt',
+  'nicht', 'keine', 'kein', 'erforderlich', 'gesendet', 'abgelaufen', 'ungültig', 'nur', 'only']);
+const NOT_A_CODE = /^(?:utf|iso|windows|latin|ucs)-?\d|^\d+(?:\.\d+)?(?:ms|s|px|pt|em|rem|vh|vw|dpi|deg)$/i;
+const HIDDEN_BLOCK = /<(style|script|head)\b[\s\S]*?<\/\1>/gi;
 const LOOSE_TOKEN = /(?<![A-Za-z0-9-])(?=[A-Za-z-]*\d)[A-Za-z0-9](?:-?[A-Za-z0-9]){3,11}(?![A-Za-z0-9-])/g;
 const LOOSE_REACH = 300;
 const GAP = String.raw`(?:\s|<[^<>]*>|&nbsp;|[:–-])*`;
@@ -251,34 +259,52 @@ const lettersOnlyLower = (code) => !/\d/.test(code) && code !== code.toUpperCase
 function maskLabelled(text) {
   const masked = replaceCode(LABELLED, text, lettersOnlyLower);
   return replaceCode(STRONG_LABELLED, masked,
-    (code, after) => YEAR.test(code) || (lettersOnlyLower(code) && /^[^\S\n]+[a-zäöüß]/i.test(after)));
+    (code) => YEAR.test(code) || PROSE.has(code.toLowerCase()));
 }
 
 const nearIn = (text) => (start, end) => hasContext(
   visibleBefore(text, start) + text.slice(start, end) + visibleAfter(text, end));
 
 function maskBoxes(text) {
-  return text.replace(BOXED, (hit, offset) => {
-    const chars = hit.replace(/<[^<>]*>|&nbsp;|\s/g, '');
+  return text.replace(BOXED, (hit, box, offset) => {
+    const start = offset + hit.length - box.length;
+    const chars = box.replace(/<[^<>]*>|&nbsp;|\s/g, '');
     if (!/\d/.test(chars) || YEAR.test(chars)
-      || insideProtectedSpan(text, offset, offset + hit.length)) return hit;
-    return MASK;
+      || badSurroundings(text, chars, start, start + box.length)) return hit;
+    let first = true;
+    const masked = box.replace(/<[^<>]*>|&nbsp;|\s+|([A-Z0-9])/gi, (part, char) => {
+      if (!char) return part;
+      const out = first ? MASK : '';
+      first = false;
+      return out;
+    });
+    return hit.slice(0, hit.length - box.length) + masked;
   });
 }
 
+function hiddenAt(text, index, blocks) {
+  if (/<[^>]*$/.test(text.slice(Math.max(0, text.lastIndexOf('>', index) + 1), index))) return true;
+  return blocks.some(([from, to]) => index >= from && index < to);
+}
+
 function maskAfterAnnouncement(text) {
-  const announce = new RegExp(STRONG, 'giu');
-  for (const a of text.matchAll(announce)) {
+  const blocks = [...text.matchAll(HIDDEN_BLOCK)].map((b) => [b.index, b.index + b[0].length]);
+  const tokens = [...text.matchAll(LOOSE_TOKEN)];
+  const hits = new Map();
+  for (const a of text.matchAll(new RegExp(STRONG, 'giu'))) {
     const from = a.index + a[0].length;
-    const region = text.slice(0, from + LOOSE_REACH);
-    for (const t of region.matchAll(LOOSE_TOKEN)) {
-      if (t.index < from) continue;
-      const end = t.index + t[0].length;
-      if (badSurroundings(text, t[0], t.index, end) || /<[^>]*$/.test(text.slice(from, t.index))) continue;
-      return text.slice(0, t.index) + MASK + text.slice(end);
+    for (const t of tokens) {
+      if (t.index < from || t.index >= from + LOOSE_REACH || NOT_A_CODE.test(t[0])
+        || hiddenAt(text, t.index, blocks)
+        || badSurroundings(text, t[0], t.index, t.index + t[0].length)) continue;
+      hits.set(t.index, t[0].length);
     }
   }
-  return text;
+  let out = text;
+  for (const [index, length] of [...hits].sort((x, y) => y[0] - x[0])) {
+    out = out.slice(0, index) + MASK + out.slice(index + length);
+  }
+  return out;
 }
 
 function maskAll(text, strong) {
@@ -292,7 +318,7 @@ function maskAll(text, strong) {
       || !(strong || near(offset, offset + hit.length))
       ? hit : hit.replace(digits, MASK)));
   masked = maskLabelled(masked);
-  if (strong && !masked.includes(MASK)) masked = maskAfterAnnouncement(masked);
+  if (strong) masked = maskAfterAnnouncement(masked);
   return masked;
 }
 

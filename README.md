@@ -202,9 +202,9 @@ details:
 
 - The OTP filter masks a code-shaped string (four digits, 3+3 digits, spaced
   digits, five to eight alphanumerics with a digit) only when a keyword such as
-  code, TAN, PIN, OTP, verification, one-time, guard, sign-in, "confirm your
-  email" or a German compound like Bestätigungscode stands within 40
-  characters or when the message itself is a 2FA mail (keyword in the subject or a sender like `security@` or `verify@`).
+  code, TAN, PIN, OTP, verification, one-time, guard, "enter this", "confirm
+  your email" or a German compound like Bestätigungscode stands within 40
+  characters or when the message itself is a 2FA mail (keyword in the subject or a sender like `verify@` or `2fa@`).
   Text that announces a code strongly (OTP, TAN, one-time password, "your
   code", verification code, Bestätigungscode and the like) is treated as a 2FA
   mail as a whole. Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
@@ -245,7 +245,7 @@ details:
 npm test
 ```
 
-99 cases. Two of them are skipped unless you point them at extras:
+102 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

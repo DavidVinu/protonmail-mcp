@@ -113,7 +113,7 @@ export async function collectThread(himalaya, id, mailbox, { own = null, quotes 
     if (batch.length < PAGE_SIZE - 1) break;
   }
 
-  if (query && !envelopes.some((e) => e['message-id'] === seed.messageId)) incomplete = true;
+  if (query && seed.messageId && !envelopes.some((e) => e['message-id'] === seed.messageId)) incomplete = true;
   const thread = members(seed, envelopes);
   if (!thread.length) {
     return { mailbox, messages: [{ id, text: readable(plain.out, { quotes }) }], omitted: 0, incomplete };

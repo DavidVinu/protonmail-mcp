@@ -354,7 +354,7 @@ test('A code split into boxes or a few words after its announcement is masked', 
 test('Common code phrasings without the word code are masked', () => {
   for (const t of ['482913 is your Steam Guard number. Expires in 10 minutes.',
     'Welcome! Enter this number in the app to confirm your email address.\n\n482913',
-    'From: security@example.com\nSubject: Hello\n\nEnter 482913 to continue']) {
+    'From: verify@example.com\nSubject: Hello\n\nEnter 482913 to continue']) {
     assert.ok(!redact(t).includes('482913'), t);
   }
 });
@@ -372,4 +372,31 @@ test('A phone number does not swallow the code after it', () => {
 
 test('Words after a strong label stay readable', () => {
   for (const t of ['OTP: please contact us', 'TAN: Bitte nicht weitergeben.']) assert.equal(redact(t), t);
+});
+
+test('Round five: lowercase codes, mixed masks, the reach limit and hidden html', () => {
+  assert.ok(!redact('Ihr Bestätigungscode: wxyzab bitte eingeben').includes('wxyzab'));
+  assert.ok(!redact('Your OTP: abcdef please').includes('abcdef'));
+  assert.ok(!redact('Your one-time password is below. Order 4829 shipped.\n\nxkcd-7Q2').includes('7Q2'));
+  const far = redact(`Your one-time password is below:${' '.repeat(280)}1a2b3c4d5e6f`);
+  assert.ok(far.endsWith('[...]') && !far.includes('6f'));
+  const html = redact('<title>Your one-time password</title><style>td{padding:0 10px}</style><p>xkcd-7q2</p>');
+  assert.ok(html.includes('10px') && !html.includes('xkcd-7q2'));
+  assert.ok(redact('Your SMS from +1 415 555 1234 4829 is your code').includes('+1 415 555 1234 [...]'));
+});
+
+test('Round five: login footers, security senders and digit runs stay readable', () => {
+  for (const t of ['Hi, your login was successful. Kundennummer 48291, Rechnung 2026',
+    'From: alerts@security.bank.de\nSubject: Kontoauszug\n\nKonto 12345678 Saldo 4829']) {
+    assert.equal(redact(t), t);
+  }
+  assert.equal(redact('Your one-time password: 9KQ2ZP.<td>1</td><td>2</td><td>3</td><td>4</td>'),
+    'Your one-time password: [...].<td>1</td><td>2</td><td>3</td><td>4</td>');
+  assert.equal(redact('Your verification code:<td>4</td><td>8</td><td>2</td><td>9</td>'),
+    'Your verification code:<td>[...]</td><td></td><td></td><td></td>');
+});
+
+test('A charset after an announcement stay readable', () => {
+  const t = 'Your one-time password\nContent-Type: text/html; charset=utf-8';
+  assert.equal(redact(t), t);
 });

@@ -353,7 +353,8 @@ export function register(server, config = resolveConfig()) {
       + 'search, so a reply under a completely new subject is not found. Searches '
       + `"All Mail"; the ids in the answer are All Mail UIDs. At most ${MAX_MESSAGES} `
       + 'messages, the most recent ones; omitted counts the rest, and incomplete: '
-      + 'true means the search hit its page limit and older messages may be missing. '
+      + 'true means the search hit its page limit or did not find the given message itself '
+      + '(typical for subjects with umlauts), so messages may be missing. '
       + 'HTML is converted to text, and quoted history is cut unless quotes is true.',
     inputSchema: {
       id: z.string().min(1).describe('IMAP UID of any message in the thread'),
