@@ -244,7 +244,7 @@ details:
 npm test
 ```
 
-86 cases. Two of them are skipped unless you point them at extras:
+92 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

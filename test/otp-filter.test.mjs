@@ -307,3 +307,32 @@ test('A German landline stays readable next to a booking code', () => {
   const t = 'Buchungscode schicke ich dir. Telefon: 030 555012-57, Raum 4711';
   assert.equal(redact(t), t);
 });
+
+test('Ordinary numbers in confirmation mails and next to ordinary codes survive', () => {
+  for (const t of ['Please confirm your zip code: 69120', 'Your postal code: 69120 is wrong',
+    'At one time we sent order 1234567890', 'Telefon: 030 555012-57',
+    'From: Shop <shop@x.de>\nSubject: Bestätigung Ihrer Bestellung\n\nBestellnummer 1234567890',
+    'From: Bank <security@bank.de>\nSubject: Info\n\nOrder 1234567890']) {
+    assert.equal(redact(t), t, t);
+  }
+});
+
+test('A code in two groups starting with 0 is masked completely', () => {
+  assert.ok(!/\d/.test(redact('Your login code is 0421 9384')));
+  assert.ok(!/\d/.test(redact('code 0621 482913')));
+});
+
+test('A code on the line or tag after its announcement is masked', () => {
+  assert.equal(redact('<p>Your verification code</p><p><b>KXQPZM</b></p>'),
+    '<p>Your verification code</p><p><b>[...]</b></p>');
+  assert.equal(redact('Your verification code:\nKXQPZM'), 'Your verification code:\n[...]');
+});
+
+test('Layout numbers and ordinary compound codes survive', () => {
+  for (const t of ['<table width="590" style="max-width: 600px">', 'X-MICROSOFT-LOCATIONPOSTALCODE:69120',
+    '<td class="ab12cd maxw-660">']) {
+    assert.ok(redact(`Your verification code is near. ${t}`).endsWith(t), t);
+  }
+  const company = 'Revolut Securities Europe UAB (company code: 304580906, Code ABC)';
+  assert.equal(redact(company), company);
+});

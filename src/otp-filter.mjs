@@ -45,6 +45,8 @@ const ISO_DATE = /(?:19|20)\d{2}-[01]?\d-[0-3]?\d/g;
 const PHONE = /\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{4}/g;
 const AMOUNT_AFTER = /^[.,]\d/;                // 1234,50
 const NUMBERLIKE_BEFORE = /[\d.,/:]$/;         // part of a longer number
+const LAYOUT_BEFORE = /(?:width|height|size|padding|margin|spacing|border|radius|top|left|right|bottom|class|id|colspan|rowspan|cellpadding|cellspacing)\s*[:=]\s*["']?$/i;
+const LAYOUT_AFTER = /^(?:px|pt|em|rem|%|vh|vw|dpi)/i;
 
 // Spans that must NEVER be masked. No one-time code looks like any of these,
 // and the damage would be large: a destroyed IBAN or postcode makes exactly
@@ -58,7 +60,7 @@ const PROTECTED = [
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
   /\b(?:19|20)\d{2}-\d{2}\b/g,                          // 2026-09
   /\+\d{1,3}(?:[ \/-]?\(?\d+\)?)+/g,
-  /(?<![\d.,])0\d{2,5}[ \/]\d{4,8}(?:-\d{1,5})?(?!\d|[.,]\d)/g,
+  /(?<=(?:tel|telefon|phone|fon|fax|mobil|handy|mobile)\.?:?[^\S\n]{0,3})0\d{2,5}[ \/]\d{4,8}(?:-\d{1,5})?(?!\d|[.,]\d)/gi,
 ];
 
 /** Does a protected span cover the candidate completely? */
@@ -78,6 +80,8 @@ function isFalsePositive(text, raw, start, end) {
   if (THREE_LOWERCASE.test(raw)) return true;
   if (NUMBERLIKE_BEFORE.test(text.slice(Math.max(0, start - 1), start))) return true;
   if (AMOUNT_AFTER.test(text.slice(end, end + 2))) return true;
+  if (LAYOUT_BEFORE.test(text.slice(Math.max(0, start - 20), start))) return true;
+  if (LAYOUT_AFTER.test(text.slice(end, end + 3))) return true;
   for (const guard of [DASHED_DATE, ISO_DATE, PHONE]) {
     guard.lastIndex = 0;
     for (const hit of text.matchAll(guard)) {
@@ -107,8 +111,15 @@ export function maskCodes(text, near = () => true) {
 export const WINDOW = 40;
 
 const L = 'a-zäöüß';
-const ORDINARY = String.raw`bar|qr|quell|uni|dress|post|postal|zip|l[äa]nder|farb|morse|geo|source|country|area|colou?r`;
-const CODE_WORD = String.raw`(?<!(?:${ORDINARY})[-\s])(?!(?:${ORDINARY})code)[${L}]*code`;
+const ORDINARY = [
+  'bar', 'qr', 'quell', 'uni', 'dress', 'post', 'postal', 'zip', 'l[äa]nder', 'farb', 'morse', 'geo',
+  'source', 'country', 'area', 'colou?r', 'company', 'firmen', 'registration', 'register', 'tax',
+  'steuer', 'vat', 'customer', 'kunden', 'order', 'bestell', 'product', 'produkt', 'artikel',
+  'article', 'discount', 'rabatt', 'gutschein', 'voucher', 'promo', 'coupon', 'booking', 'buchungs',
+  'reference', 'referenz', 'tracking', 'sendungs', 'swift', 'bank', 'sort', 'branch', 'airport',
+  'currency', 'status', 'error', 'fehler', 'html', 'css', 'tarif', 'event', 'veranstaltungs',
+].join('|');
+const CODE_WORD = String.raw`(?<!(?:${ORDINARY})[-\s])(?![${L}]*(?:${ORDINARY})code)[${L}]*code`;
 const KEYWORDS = [
   'tan', 'otp', 'pin', '2fa', 'mfa', 'token', 'passcode', 'passwor[dt]', 'kennwort',
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
@@ -120,18 +131,19 @@ const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`
 const STRONG_TERMS = [
   'otp', 'tan', '2fa', 'mfa', 'passcode',
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
-  String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)[${L}]*`,
+  String.raw`one[-\s]?time[-\s]?(?:code|password|passcode|pin)`,
+  String.raw`einmal[-\s]?(?:code|kennwort|passwort|pin)`,
   String.raw`(?:verification|security|confirmation|login|log[-\s]?in|sign[-\s]?in|authentication|access|sms)[-\s]code`,
   String.raw`(?:verifizierungs|bestätigungs|bestaetigungs|sicherheits|anmelde|zugangs|freigabe|login|einmal|authentifizierungs)[-\s]?code`,
-  String.raw`(?:your|ihr|dein)[^\S\n]+(?:[${L}]+[^\S\n]+)?code`,
+  String.raw`(?:your|ihr|dein)[^\S\n]+(?:(?!(?:${ORDINARY})(?![${L}]))[${L}]+[^\S\n]+)?code`,
 ];
 const STRONG = `(?<![${L}0-9])(?:${STRONG_TERMS.join('|')})s?(?![${L}])`;
 const ANNOUNCES = new RegExp(STRONG, 'iu');
 
-const SUBJECT_ONLY = new RegExp(`(?<![${L}])(?:sign[-\\s]?in|log[-\\s]?in|anmeld[${L}]*|security|sicherheit[${L}]*|confirm[${L}]*|bestätig[${L}]*)`, 'iu');
+const SUBJECT_ONLY = new RegExp(`(?<![${L}])(?:sign[-\\s]?in|log[-\\s]?in|verify|verifizier[${L}]*)(?![${L}])`, 'iu');
 
-const SENDER_TOKENS = new Set(['verify', 'verification', 'security', 'otp', '2fa',
-  'mfa', 'auth', 'login', 'signin', 'accountprotection', 'passcode']);
+const SENDER_TOKENS = new Set(['verify', 'verification', 'otp', '2fa',
+  'mfa', 'auth', 'signin', 'accountprotection', 'passcode']);
 
 const LABEL_TAIL = String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*:?|:)[^\S\n]*`;
 const LABELLED = new RegExp(
@@ -142,6 +154,10 @@ const LABELLED = new RegExp(
 const STRONG_LABELLED = new RegExp(
   STRONG + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*)?:[^\S\n]*([a-z0-9](?:-?[a-z0-9]){3,11})${END}`, 'giu');
 const LONG_NUMBER = new RegExp(`${START}(\\d{9,10})${END}`, 'g');
+const GAP = String.raw`(?:\s|<[^<>]*>|&nbsp;|[:–-])*`;
+const NEXT_TOKEN = new RegExp(
+  STRONG + GAP + String.raw`(?:(?:is|ist|lautet)(?![${L}])${GAP})?`
+  + String.raw`((?<![${L}0-9])[A-Z0-9](?:-?[A-Z0-9]){3,11})(?=$|[\s<.,;:!?)'"&])`, 'giu');
 
 export function hasContext(text) {
   return typeof text === 'string' && CONTEXT.test(text);
@@ -149,8 +165,8 @@ export function hasContext(text) {
 
 export function isTwoFactorMail({ subject = '', from = '' } = {}) {
   if (hasContext(subject) || SUBJECT_ONLY.test(subject)) return true;
-  const local = String(from).match(/([^\s<"@]+)@/)?.[1]?.toLowerCase() ?? '';
-  return local.split(/[-._+]/).some((t) => SENDER_TOKENS.has(t));
+  const [, local = '', host = ''] = String(from).toLowerCase().match(/([^\s<"@]+)@([^\s>".]+)/) ?? [];
+  return [...local.split(/[-._+]/), host].some((t) => SENDER_TOKENS.has(t));
 }
 
 function decodeWords(value) {
@@ -190,25 +206,38 @@ function visibleAfter(text, end) {
   }
 }
 
-function maskLabelled(text) {
-  const masked = text.replace(LABELLED, (hit, code) => {
-    if (code.includes(MASK)) return hit;
-    if (!/\d/.test(code) && code !== code.toUpperCase()) return hit;
+function replaceCode(pattern, text, keep) {
+  return text.replace(pattern, (hit, code, offset) => {
+    const start = offset + hit.length - code.length;
+    if (code.includes(MASK) || keep(code)
+      || insideProtectedSpan(text, start, start + code.length)) return hit;
     return hit.slice(0, hit.length - code.length) + MASK;
   });
-  return masked.replace(STRONG_LABELLED, (hit, code) => (
-    code.includes(MASK) ? hit : hit.slice(0, hit.length - code.length) + MASK));
 }
 
-function maskAll(text) {
-  const masked = maskCodes(text);
-  return maskLabelled(masked.replace(LONG_NUMBER, (hit, digits, offset) => (
-    insideProtectedSpan(masked, offset, offset + hit.length) ? hit : hit.replace(digits, MASK))));
+const lettersOnlyLower = (code) => !/\d/.test(code) && code !== code.toUpperCase();
+
+function maskLabelled(text) {
+  const masked = replaceCode(LABELLED, text, lettersOnlyLower);
+  return replaceCode(STRONG_LABELLED, masked, (code) => YEAR.test(code));
+}
+
+function maskAll(text, strong) {
+  const near = (start, end) => hasContext(
+    visibleBefore(text, start) + text.slice(start, end) + visibleAfter(text, end));
+  let masked = maskCodes(text);
+  masked = replaceCode(NEXT_TOKEN, masked, (code) => lettersOnlyLower(code) || YEAR.test(code));
+  masked = masked.replace(LONG_NUMBER, (hit, digits, offset) => (
+    insideProtectedSpan(masked, offset, offset + hit.length)
+      || !(strong || near(offset, offset + hit.length))
+      ? hit : hit.replace(digits, MASK)));
+  return maskLabelled(masked);
 }
 
 export function redact(text, { twoFactor = false } = {}) {
   if (typeof text !== 'string' || !text) return text;
-  if (twoFactor || ANNOUNCES.test(text) || isTwoFactorMail(headersOf(text))) return maskAll(text);
+  const strong = ANNOUNCES.test(text);
+  if (strong || twoFactor || isTwoFactorMail(headersOf(text))) return maskAll(text, strong);
   const near = (start, end) => hasContext(
     visibleBefore(text, start) + text.slice(start, end) + visibleAfter(text, end));
   return maskLabelled(maskCodes(text, near));

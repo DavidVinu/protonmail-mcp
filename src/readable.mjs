@@ -10,7 +10,7 @@ const ENTITIES = {
 const HTML_QUOTE = /<(?:div|blockquote|hr)\b[^>]*(?:gmail_quote|protonmail_quote|divRplyFwdMsg|appendonsend|moz-cite-prefix|yahoo_quoted|type="?cite)[^>]*>/i;
 
 const TEXT_QUOTE = [
-  /^-{2,}\s*(?:Original Message|Ursprüngliche Nachricht|Forwarded message|Weitergeleitete Nachricht)\s*-{2,}/mi,
+  /^-{2,}\s*(?:Original Message|Ursprüngliche Nachricht)\s*-{2,}/mi,
   /^(?:Von|From):[^\n]*\n(?:[^\n]*\n){0,2}?(?:Gesendet|Sent|Datum|Date):/mi,
   /^(?:Am|On)\s[^\n]{4,120}(?:schrieb|wrote)[^\n]*:\s*$/mi,
 ];
@@ -52,9 +52,12 @@ export function stripQuotes(text) {
   return out.split('\n').filter((line) => !/^\s*>/.test(line)).join('\n').trimEnd();
 }
 
-export function readable(text, { quotes = false } = {}) {
+const FORWARD = /^Subject:[^\S\n]*(?:(?:re|aw)\s*:\s*)*(?:fwd?|wg|tr)\s*:/mi;
+
+export function readable(text, { quotes: keep = false } = {}) {
   const blank = text.search(/\r?\n\r?\n/);
   const head = blank >= 0 ? text.slice(0, blank) : text;
+  const quotes = keep || FORWARD.test(head);
   let body = blank >= 0 ? text.slice(blank).replace(/^\r?\n\r?\n/, '') : '';
   body = body.replace(/<html\b[\s\S]*?(?:<\/html>|$)/gi, (html) => `\n${htmlToText(html, { quotes })}\n`);
   if (!/<html\b/i.test(text) && /^\[\d+\] text\/html\b/m.test(body)) {

@@ -47,3 +47,9 @@ test('Plain text with angle-bracket addresses is not treated as HTML', () => {
   assert.ok(readable(mail).includes('<alice@x.org>'));
   assert.ok(readable(mail).includes('<https://example.org/doc>'));
 });
+
+test('A forward keeps the forwarded message', () => {
+  const mail = 'From: A <a@x.org>\nSubject: WG: Vertrag\n\n---------- Forwarded message ----------\n'
+    + 'Von: B <b@x.org>\nGesendet: Montag\nBetreff: Vertrag\n\nDer Vertrag im Anhang.';
+  assert.ok(readable(mail).includes('Der Vertrag im Anhang.'));
+});

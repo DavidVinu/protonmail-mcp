@@ -274,7 +274,9 @@ function withMailbox(result, mailbox) {
 
 export function splitPhrases(query) {
   return query.replace(/\b(from|to|subject|body)\s+"([^"]*)"/gi, (whole, field, phrase) => {
-    const words = phrase.split(/[^\p{L}\p{N}]+/u).filter((w) => w && !QUERY_WORDS.has(w.toLowerCase()));
+    const words = phrase.split(/\s+/)
+      .map((w) => w.replace(/[()"]/g, '').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+      .filter((w) => w && !QUERY_WORDS.has(w.toLowerCase()));
     const ascii = words.filter((w) => !/[^\x00-\x7f]/.test(w));
     const used = ascii.length ? ascii : words;
     if (!used.length) return whole;
@@ -316,8 +318,8 @@ export function register(server, config = resolveConfig()) {
   server.registerTool('envelope_search', {
     description: 'Search envelopes. Defaults to "All Mail", so archived and sent '
       + 'mail is found too. The answer names its mailbox: the ids are UIDs of that '
-      + 'folder only, so pass the same mailbox to message_read, message_reply, '
-      + 'flag_add and the attachment tools, whose default is inbox. Query syntax (himalaya): '
+      + 'folder only; message_read, thread_read, message_reply, flag_add and the '
+      + 'attachment tools require that mailbox. Query syntax (himalaya): '
       + 'conditions from <text>, to <text>, subject <text>, body <text>, '
       + 'date <yyyy-mm-dd>, after <yyyy-mm-dd>, flag <seen|answered|flagged|draft>; '
       + 'combine with and, or, not and parentheses; sort with order by '
@@ -461,7 +463,7 @@ export function register(server, config = resolveConfig()) {
         return { isError: true, content: [{ type: 'text', text: result.error }] };
       }
       const last = Math.min(result.pages.length, page - 1 + pageCount);
-      const shown = result.pages.slice(page - 1, last).map(redact).join('\f');
+      const shown = result.pages.slice(page - 1, last).map((p) => redact(p)).join('\f');
       return { content: [{ type: 'text', text: JSON.stringify({
         ...scrub({ filename: meta.filename, mime: meta.mime }),
         size: meta.size,

@@ -408,8 +408,6 @@ test('attachment_read ends softly when the mailbox is unreachable', async () => 
   assert.equal(JSON.parse(a.content[0].text).soft, true);
 });
 
-// ------------------------------------------------------------ search, thread --
-
 test('envelope_search searches All Mail by default and splits quoted phrases', async () => {
   const { seen, answers } = await callServer([tool('envelope_search',
     { query: 'subject "AG Vernetzung (KI)" and body "nächste Sitzung"' })],
@@ -525,4 +523,10 @@ test('thread_read says so when the subject gives nothing to search for', async (
   const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
   assert.equal(data.count, 1);
   assert.equal(data.incomplete, true);
+});
+
+test('A quoted address stays one search word', async () => {
+  const { seen } = await callServer([tool('envelope_search', { query: 'from "alice@example.com"' })],
+    { stdout: '{"envelopes":[]}' });
+  assert.equal(seen.argv.at(-1), 'from alice@example.com');
 });
