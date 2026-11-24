@@ -218,7 +218,10 @@ details:
   `In-Reply-To`/`References`, or with the same subject without
   `Re:`/`AW:`/`Fwd:`/`WG:` prefixes, a shared participant and a date within 180
   days. A reply under a subject that shares none of those words is not found.
-  `incomplete: true` means the search hit its page limit.
+  `incomplete: true` means the search hit its page limit. HTML is converted to
+  text and quoted history is cut (Outlook, Gmail, Proton and Apple markers,
+  "Am ... schrieb", "On ... wrote", `>` lines), so each message shows only its
+  own text; `quotes: true` keeps everything.
 - `envelope_search` answers with the `mailbox` it searched. Its ids are UIDs
   of that folder; the other tools default to `inbox`, so pass the mailbox on.
 - The recipient rule fails closed: if the original cannot be read, no draft is
@@ -238,7 +241,7 @@ details:
 npm test
 ```
 
-72 cases. Two of them are skipped unless you point them at extras:
+77 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

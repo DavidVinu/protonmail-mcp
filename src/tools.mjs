@@ -347,14 +347,17 @@ export function register(server, config = resolveConfig()) {
       + 'search, so a reply under a completely new subject is not found. Searches '
       + `"All Mail"; the ids in the answer are All Mail UIDs. At most ${MAX_MESSAGES} `
       + 'messages, the most recent ones; omitted counts the rest, and incomplete: '
-      + 'true means the search hit its page limit and older messages may be missing.',
+      + 'true means the search hit its page limit and older messages may be missing. '
+      + 'HTML is converted to text, and quoted history is cut unless quotes is true.',
     inputSchema: {
       id: z.string().min(1).describe('IMAP UID of any message in the thread'),
       mailbox: z.string().default(ALL_MAIL).describe('folder the id belongs to'),
+      quotes: z.boolean().default(false)
+        .describe('keep the quoted history in every reply; off, each message shows only its own text'),
     },
-  }, async ({ id, mailbox }) => {
+  }, async ({ id, mailbox, quotes }) => {
     const own = await ownAddress(config).catch(() => null);
-    const thread = await collectThread((argv) => run(config, argv), id, mailbox, own);
+    const thread = await collectThread((argv) => run(config, argv), id, mailbox, { own, quotes });
     if (thread.failed) {
       const { code, out, err } = thread.failed;
       return failure(code, out, err, true);

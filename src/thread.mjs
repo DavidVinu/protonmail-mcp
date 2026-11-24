@@ -1,3 +1,5 @@
+import { readable } from './readable.mjs';
+
 export const ALL_MAIL = 'All Mail';
 
 const PREFIX = /^(?:\s*(?:re|aw|fwd?|wg|antw|sv|vs|tr)\s*(?:\[\d+\])?\s*:)+/i;
@@ -74,7 +76,7 @@ export function members(seed, envelopes) {
 
 const day = (t) => new Date(t).toISOString().slice(0, 10);
 
-export async function collectThread(himalaya, id, mailbox, own = null) {
+export async function collectThread(himalaya, id, mailbox, { own = null, quotes = false } = {}) {
   const plain = await himalaya(['message', 'read', id, '--mailbox', mailbox]);
   if (plain.code !== 0) return { failed: plain };
   const raw = await himalaya(['message', 'read', id, '--mailbox', mailbox, '--raw']);
@@ -105,14 +107,15 @@ export async function collectThread(himalaya, id, mailbox, own = null) {
 
   const thread = members(seed, envelopes);
   if (!thread.length) {
-    return { mailbox, messages: [{ id, text: plain.out }], omitted: 0, incomplete };
+    return { mailbox, messages: [{ id, text: readable(plain.out, { quotes }) }], omitted: 0, incomplete };
   }
   const shown = thread.slice(-MAX_MESSAGES);
   const messages = [];
   for (const e of shown) {
     const read = await himalaya(['message', 'read', e.id, '--mailbox', ALL_MAIL]);
     if (read.code !== 0) return { failed: read };
-    messages.push({ id: e.id, date: e.date, from: e.from, subject: e.subject, text: read.out });
+    messages.push({ id: e.id, date: e.date, from: e.from, subject: e.subject,
+      text: readable(read.out, { quotes }) });
   }
   return { mailbox: ALL_MAIL, messages, omitted: thread.length - shown.length, incomplete };
 }
