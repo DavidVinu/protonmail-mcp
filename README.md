@@ -202,9 +202,9 @@ details:
 
 - The OTP filter masks a code-shaped string (four digits, 3+3 digits, spaced
   digits, five to eight alphanumerics with a digit) only when a keyword such as
-  code, TAN, PIN, OTP, verification, one-time or a German compound like
-  Bestätigungscode stands within 40 characters, or when the message itself is a
-  2FA mail (keyword in the subject, or a sender like `security@`, `verify@`).
+  code, TAN, PIN, OTP, verification, one-time, guard, sign-in, "confirm your
+  email" or a German compound like Bestätigungscode stands within 40
+  characters or when the message itself is a 2FA mail (keyword in the subject or a sender like `security@` or `verify@`).
   Text that announces a code strongly (OTP, TAN, one-time password, "your
   code", verification code, Bestätigungscode and the like) is treated as a 2FA
   mail as a whole. Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
@@ -213,14 +213,15 @@ details:
 - `envelope_search` passes the query to himalaya. Each condition takes one
   word. Quoted phrases do not work in himalaya against Proton Bridge, so the
   server splits `subject "a b"` into `(subject a and subject b)`. Bridge matches
-  the encoded raw text, so words with umlauts, and words that straddle an
+  the encoded raw text, so words with umlauts and words that straddle an
   encoded-word boundary in a long subject, are often not found.
 - `thread_read` searches `All Mail` for up to three words of the subject
   within 180 days before the given message, then keeps messages linked by
-  `In-Reply-To`/`References`, or with the same subject without
+  `In-Reply-To`/`References` or with the same subject without
   `Re:`/`AW:`/`Fwd:`/`WG:` prefixes, a shared participant and a date within 180
   days. A reply under a subject that shares none of those words is not found.
-  `incomplete: true` means the search hit its page limit. HTML is converted to
+  `incomplete: true` means the search hit its page limit or did not find the
+  message itself (typical for subjects with umlauts). HTML is converted to
   text and quoted history is cut (Outlook, Gmail, Proton and Apple markers,
   "Am ... schrieb", "On ... wrote", `>` lines), so each message shows only its
   own text; `quotes: true` keeps everything.
@@ -244,7 +245,7 @@ details:
 npm test
 ```
 
-92 cases. Two of them are skipped unless you point them at extras:
+99 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

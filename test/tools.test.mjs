@@ -525,6 +525,18 @@ test('thread_read says so when the subject gives nothing to search for', async (
   assert.equal(data.incomplete, true);
 });
 
+test('thread_read says so when the search misses the message itself', async () => {
+  const routes = {
+    'message read 5 --mailbox inbox': 'Date: Mon, 12 Oct 2026 20:00:00 +0000\nSubject: Sitzung Protokoll\n\nkurz',
+    'message read 5 --mailbox inbox --raw': 'Message-Id: <k@x>\n\nkurz',
+  };
+  const { answers } = await callServer([tool('thread_read', { id: '5', mailbox: 'inbox' })],
+    { env: { MOCK_ROUTES: JSON.stringify(routes) }, stdout: '{"envelopes":[]}' });
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.count, 1);
+  assert.equal(data.incomplete, true);
+});
+
 test('A quoted address stays one search word', async () => {
   const { seen } = await callServer([tool('envelope_search', { query: 'from "alice@example.com"' })],
     { stdout: '{"envelopes":[]}' });

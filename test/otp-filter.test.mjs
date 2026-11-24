@@ -336,3 +336,40 @@ test('Layout numbers and ordinary compound codes survive', () => {
   const company = 'Revolut Securities Europe UAB (company code: 304580906, Code ABC)';
   assert.equal(redact(company), company);
 });
+
+test('A label ending in a layout word does not shield the code', () => {
+  for (const t of ['Your code for Desktop: 482913', 'Use this to sign in to your Android: 482913',
+    'Valid: 482913 is your verification code']) {
+    assert.ok(!redact(t).includes('482913'), t);
+  }
+});
+
+test('A code split into boxes or a few words after its announcement is masked', () => {
+  const boxes = 'Your verification code:<table><tr><td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td></tr></table>';
+  assert.ok(!/\d/.test(redact(boxes)));
+  assert.equal(redact('Your one-time password is below.\n\nxkcd-7Q2'),
+    'Your one-time password is below.\n\n[...]');
+});
+
+test('Common code phrasings without the word code are masked', () => {
+  for (const t of ['482913 is your Steam Guard number. Expires in 10 minutes.',
+    'Welcome! Enter this number in the app to confirm your email address.\n\n482913',
+    'From: security@example.com\nSubject: Hello\n\nEnter 482913 to continue']) {
+    assert.ok(!redact(t).includes('482913'), t);
+  }
+});
+
+test('A long number keeps its context after earlier masks', () => {
+  const t = `From: verify@x.com\nSubject: hi\n\n${'Ref AB12CD34 '.repeat(25)}Your PIN number 1234567890`;
+  assert.ok(!redact(t).includes('1234567890'));
+});
+
+test('A phone number does not swallow the code after it', () => {
+  assert.ok(!redact('Your SMS from +4915112345678 482913 is your code').includes('482913'));
+  const t = 'Telefon +1 415 555 1234, Tel. +49 30 555012-25';
+  assert.equal(redact(t), t);
+});
+
+test('Words after a strong label stay readable', () => {
+  for (const t of ['OTP: please contact us', 'TAN: Bitte nicht weitergeben.']) assert.equal(redact(t), t);
+});
