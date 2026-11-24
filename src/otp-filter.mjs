@@ -54,7 +54,7 @@ const LAYOUT_BEFORE = /(?<![a-z-])(?:(?:width|height|size|padding|margin|spacing
 const PROTECTED = [
   /\b[A-Z]{2}\d{2}(?:[  ]?[A-Z0-9]{4}){2,8}\b/g,        // IBAN
   /\b\d{5}(?=[  ]+[A-ZÄÖÜ])/g,                          // postcode + city
-  /(?<=,[ \u00a0][A-Z]{2}[ \u00a0])\d{5}(?:-\d{4})?\b/g,
+  /(?<=(?:,|\b[A-Z][a-z]+)[ \u00a0][A-Z]{2}[ \u00a0])\d{5}(?:-\d{4})?\b/g,
   /\b\d{1,3}(?:[. ]\d{3})+(?:,\d{2})?\b/g,              // 1.234.567,89
   /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g,                    // ISO date
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
@@ -275,15 +275,22 @@ function announcementRanges(text) {
     .map((a) => [a.index + a[0].length, a.index + a[0].length + LOOSE_REACH]);
 }
 
-const TIME = /\d+[^\S\n]*(?:min(?:ute[ns]?|s)?|minuten|h|hours?|stunden?|sec(?:onds?)?|sekunden)(?![a-zäöü])/gi;
+const TIME = /(?<![\d.,])\d{1,3}[^\S\n]*(?:min(?:ute[ns]?|s)?|minuten|hours?|stunden?|sec(?:onds?)?|sekunden)(?![a-zäöü])/gi;
+function clearGap(gap) {
+  const seen = visible(gap).replace(TIME, ' ');
+  const mask = seen.lastIndexOf(MASK);
+  return !/\d/.test(seen.replaceAll(MASK, ' ')) && (mask < 0 || !seen.slice(mask + MASK.length).trim());
+}
+
 const firstAfter = (text, ranges, index) => ranges.some(([from, to]) => index >= from && index < to
-  && !/\d/.test(visible(text.slice(from, index)).replaceAll(MASK, ' ').replace(TIME, ' ')));
+  && clearGap(text.slice(from, index)));
 
 function maskBoxes(text) {
   const ranges = announcementRanges(text);
   return text.replace(BOXED, (box, offset) => {
     const chars = box.replace(/<[^<>]*>|&nbsp;|\s/g, '');
-    if (!firstAfter(text, ranges, offset) || !/\d/.test(chars) || YEAR.test(chars)
+    if (!firstAfter(text, ranges, offset) || !/\d/.test(chars)
+      || (/[a-z]/.test(chars) && !box.includes('<')) || YEAR.test(chars)
       || /[\d.,/]$/.test(text.slice(Math.max(0, offset - 1), offset))
       || AMOUNT_AFTER.test(text.slice(offset + box.length, offset + box.length + 2))
       || LAYOUT_BEFORE.test(text.slice(Math.max(0, offset - 20), offset))

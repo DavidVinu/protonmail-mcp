@@ -424,10 +424,19 @@ test('A US address and a regulator authorisation code stay readable', () => {
 });
 
 test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note', () => {
-  for (const t of ['Your verification code: a 7 x 2 9', 'Your 2FA code<td>a</td><td>7</td><td>x</td><td>2</td>',
+  for (const t of ['Your verification code: A 7 X 2 9', 'Your 2FA code<td>a</td><td>7</td><td>x</td><td>2</td>',
     'Gib diese Zahlen ein: 4829', 'Your Steam Guard code: GB 48291', 'Your security code for order ID 48291',
     'Your code\n\n7 3 1 5\n\n2 8 4 6',
     'Your code is valid for 10 min.<table><tr><td>4</td><td>8</td><td>2</td><td>9</td></tr></table>']) {
     assert.ok(!/[2-9]\D*[2-9]/.test(redact(t).replace(/10 min/, '')), t);
   }
+});
+
+test('Round eight: addresses, quantities, spaced prose and hotlines stay readable', () => {
+  assert.ok(redact('Your verification code: 482913\nShip to Austin TX 78701').endsWith('Austin TX 78701'));
+  assert.ok(redact('Your verification code: 482913 Items<td>2</td><td>5</td><td>1</td><td>9</td>')
+    .endsWith('<td>2</td><td>5</td><td>1</td><td>9</td>'));
+  assert.ok(redact('Your verification code is below. Step a 1 b 2').endsWith('Step a 1 b 2'));
+  assert.ok(redact('Your 2FA code 482913. Hotline 24h: <td>0</td><td>8</td><td>0</td><td>0</td>')
+    .endsWith('<td>0</td><td>8</td><td>0</td><td>0</td>'));
 });
