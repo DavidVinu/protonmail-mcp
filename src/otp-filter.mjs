@@ -54,7 +54,6 @@ const LAYOUT_BEFORE = /(?<![a-z-])(?:(?:width|height|size|padding|margin|spacing
 const PROTECTED = [
   /\b[A-Z]{2}\d{2}(?:[  ]?[A-Z0-9]{4}){2,8}\b/g,        // IBAN
   /\b\d{5}(?=[  ]+[A-ZÄÖÜ])/g,                          // postcode + city
-  /(?<=(?:,|\b(?!(?:Code|Your|Ihr|Dein|Verification|Security)\b)[A-Z][a-z]+)[ \u00a0](?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)[ \u00a0])\d{5}(?:-\d{4})?\b/g,
   /\b\d{1,3}(?:[. ]\d{3})+(?:,\d{2})?\b/g,              // 1.234.567,89
   /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g,                    // ISO date
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
@@ -87,18 +86,30 @@ function phoneSpans(text) {
   return spans;
 }
 
+const US_ZIP = /\b((?:[A-Z][a-z]+[ \u00a0]){0,2}[A-Z][a-z]+),[ \u00a0](?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR|VI|GU|AS|MP|AA|AE|AP)[ \u00a0](\d{5}(?:-\d{4})?)\b/g;
+
+function zipSpans(text) {
+  return [...text.matchAll(US_ZIP)].filter((m) => !hasContext(m[1]) && !ANNOUNCES.test(m[1]))
+    .map((m) => [m.index + m[0].length - m[2].length, m.index + m[0].length]);
+}
+
+let cachedText = null;
+let cachedSpans = [];
+
+function protectedSpans(text) {
+  if (text === cachedText) return cachedSpans;
+  const spans = [...phoneSpans(text), ...zipSpans(text)];
+  for (const pattern of PROTECTED) {
+    for (const hit of text.matchAll(pattern)) spans.push([hit.index, hit.index + hit[0].length]);
+  }
+  cachedText = text;
+  cachedSpans = spans;
+  return spans;
+}
+
 /** Does a protected span cover the candidate completely? */
 function insideProtectedSpan(text, start, end) {
-  for (const [from, to] of phoneSpans(text)) {
-    if (from <= start && to >= end) return true;
-  }
-  for (const pattern of PROTECTED) {
-    pattern.lastIndex = 0;
-    for (const hit of text.matchAll(pattern)) {
-      if (hit.index <= start && hit.index + hit[0].length >= end) return true;
-    }
-  }
-  return false;
+  return protectedSpans(text).some(([from, to]) => from <= start && to >= end);
 }
 
 function badSurroundings(text, raw, start, end) {
@@ -338,7 +349,6 @@ function maskAfterAnnouncement(text) {
 function maskAll(text, strong) {
   let masked = strong ? maskBoxes(text) : text;
   masked = maskCodes(masked);
-  if (strong) masked = maskBoxes(masked);
   masked = replaceCode(NEXT_TOKEN, masked, (code) => lettersOnlyLower(code) || YEAR.test(code));
   const near = nearIn(masked);
   const before = masked;
@@ -347,7 +357,7 @@ function maskAll(text, strong) {
       || !(strong || near(offset, offset + hit.length))
       ? hit : hit.replace(digits, MASK)));
   masked = maskLabelled(masked);
-  if (strong) masked = maskAfterAnnouncement(masked);
+  if (strong) masked = maskBoxes(maskAfterAnnouncement(masked));
   return masked;
 }
 
