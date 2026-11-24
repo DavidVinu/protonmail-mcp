@@ -54,6 +54,7 @@ const LAYOUT_BEFORE = /(?<![a-z-])(?:(?:width|height|size|padding|margin|spacing
 const PROTECTED = [
   /\b[A-Z]{2}\d{2}(?:[  ]?[A-Z0-9]{4}){2,8}\b/g,        // IBAN
   /\b\d{5}(?=[  ]+[A-ZÄÖÜ])/g,                          // postcode + city
+  /(?<=\b[A-Z]{2}[ \u00a0])\d{5}(?:-\d{4})?\b/g,
   /\b\d{1,3}(?:[. ]\d{3})+(?:,\d{2})?\b/g,              // 1.234.567,89
   /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g,                    // ISO date
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
@@ -69,7 +70,7 @@ function phoneSpans(text) {
   INTERNATIONAL.lastIndex = 0;
   for (const hit of text.matchAll(INTERNATIONAL)) {
     const groups = hit[0].match(/[ \/-]?\(?\d+\)?/g);
-    const limit = /^\+1(?!\d)/.test(hit[0]) ? 11 : MAX_PHONE_DIGITS;
+    const limit = /^\+1(?:[ \/(-]|\d{10}(?!\d))/.test(hit[0]) ? 11 : MAX_PHONE_DIGITS;
     let length = 1;
     let digits = 0;
     let previous = 0;
@@ -144,7 +145,7 @@ const ORDINARY = [
   'steuer', 'vat', 'customer', 'kunden', 'order', 'bestell', 'product', 'produkt', 'artikel',
   'article', 'discount', 'rabatt', 'gutschein', 'voucher', 'promo', 'coupon', 'booking', 'buchungs',
   'reference', 'referenz', 'tracking', 'sendungs', 'swift', 'bank', 'sort', 'branch', 'airport',
-  'currency', 'status', 'error', 'fehler', 'html', 'css', 'tarif', 'event', 'veranstaltungs',
+  'currency', 'status', 'error', 'authori[sz]ation', 'fehler', 'html', 'css', 'tarif', 'event', 'veranstaltungs',
 ].join('|');
 const CODE_WORD = String.raw`(?<!(?:${ORDINARY})[-\s])(?![${L}]*(?:${ORDINARY})code)[${L}]*code`;
 const KEYWORDS = [
@@ -152,7 +153,8 @@ const KEYWORDS = [
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
   String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)`,
   `verif[${L}]*`, `authenti[${L}]*`, CODE_WORD, 'guard',
-  String.raw`(?:use|enter|gib|nutze|verwende)[^\S\n]+(?:this|these|the[^\S\n]+following|following|diesen?|folgenden?)`,
+  String.raw`(?:use|enter|gib|nutze|verwende)[^\S\n]+(?:this|these|the[^\S\n]+following|following|diesen?|folgenden?)[^\S\n]+(?:code|number|nummer|zahl|pin|digits|ziffern)`,
+  String.raw`(?:use|enter)[^\S\n]+(?:this|it)[^\S\n]+to[^\S\n]+(?:sign|log)[-\s]?in`,
   String.raw`(?:confirm|best(?:ä|ae)tig)[${L}]*[^\S\n]+(?:(?:sie|your|ihre?|deine?)[^\S\n]+)?(?:e-?mail|account|konto|identity|identität|login|anmeldung)`,
 ];
 const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`, 'iu');
@@ -184,11 +186,13 @@ const STRONG_LABELLED = new RegExp(
   STRONG + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*)?:[^\S\n]*([a-z0-9](?:-?[a-z0-9]){3,11})${END}`, 'giu');
 const LONG_NUMBER = new RegExp(`${START}(\\d{9,10})${END}`, 'g');
 const BOX_GAP = String.raw`(?:\s|<[^<>]*>|&nbsp;)+`;
-const BOXED = new RegExp(STRONG + String.raw`(?:\s|<[^<>]*>|&nbsp;|[:–-])*(?:(?:is|ist|lautet)(?![${L}])(?:\s|<[^<>]*>|&nbsp;|:)*)?`
-  + String.raw`([A-Z0-9](?:${BOX_GAP}[A-Z0-9](?![A-Za-z0-9])){3,9})`, 'giu');
+const BOXED = new RegExp(String.raw`(?<![A-Za-z0-9])[A-Z0-9](?:${BOX_GAP}[A-Z0-9](?![A-Za-z0-9])){3,9}`, 'g');
 const PROSE = new Set(['please', 'contact', 'see', 'below', 'above', 'follows', 'none', 'not',
   'required', 'optional', 'sent', 'expired', 'invalid', 'bitte', 'siehe', 'unten', 'oben', 'folgt',
-  'nicht', 'keine', 'kein', 'erforderlich', 'gesendet', 'abgelaufen', 'ungültig', 'nur', 'only']);
+  'nicht', 'keine', 'kein', 'erforderlich', 'gesendet', 'abgelaufen', 'ungültig', 'nur', 'only',
+  'enabled', 'disabled', 'active', 'inactive', 'aktiv', 'inaktiv', 'aktiviert', 'deaktiviert', 'on', 'off',
+  'an', 'aus', 'yes', 'no', 'ja', 'nein', 'danke', 'thanks', 'thank', 'used', 'verwendet', 'benutzt']);
+const PROSE_ENDING = /(?:ed|ing|iert|ung|ive|tion|lich|bar)$/i;
 const NOT_A_CODE = /^(?:utf|iso|windows|latin|ucs)-?\d|^\d+(?:\.\d+)?(?:ms|s|px|pt|em|rem|vh|vw|dpi|deg)$/i;
 const HIDDEN_BLOCK = /<(style|script|head)\b[\s\S]*?<\/\1>/gi;
 const LOOSE_TOKEN = /(?<![A-Za-z0-9-])(?=[A-Za-z-]*\d)[A-Za-z0-9](?:-?[A-Za-z0-9]){3,11}(?![A-Za-z0-9-])/g;
@@ -205,7 +209,7 @@ export function hasContext(text) {
 export function isTwoFactorMail({ subject = '', from = '' } = {}) {
   if (hasContext(subject) || SUBJECT_ONLY.test(subject)) return true;
   const [, local = '', host = ''] = String(from).toLowerCase().match(/([^\s<"@]+)@([^\s>".]+)/) ?? [];
-  return [...local.split(/[-._+]/), host].some((t) => SENDER_TOKENS.has(t));
+  return local === 'security' || [...local.split(/[-._+]/), host].some((t) => SENDER_TOKENS.has(t));
 }
 
 function decodeWords(value) {
@@ -259,27 +263,42 @@ const lettersOnlyLower = (code) => !/\d/.test(code) && code !== code.toUpperCase
 function maskLabelled(text) {
   const masked = replaceCode(LABELLED, text, lettersOnlyLower);
   return replaceCode(STRONG_LABELLED, masked,
-    (code) => YEAR.test(code) || PROSE.has(code.toLowerCase()));
+    (code) => YEAR.test(code) || (!/\d/.test(code)
+      && (PROSE.has(code.toLowerCase()) || PROSE_ENDING.test(code))));
 }
 
 const nearIn = (text) => (start, end) => hasContext(
   visibleBefore(text, start) + text.slice(start, end) + visibleAfter(text, end));
 
+function announcementRanges(text) {
+  return [...text.matchAll(new RegExp(STRONG, 'giu'))]
+    .map((a) => [a.index + a[0].length, a.index + a[0].length + LOOSE_REACH]);
+}
+
+const firstAfter = (text, ranges, index) => ranges.some(([from, to]) => index >= from && index < to
+  && !/\d|\[\.\.\.\]/.test(visible(text.slice(from, index))));
+
 function maskBoxes(text) {
-  return text.replace(BOXED, (hit, box, offset) => {
-    const start = offset + hit.length - box.length;
+  const ranges = announcementRanges(text);
+  return text.replace(BOXED, (box, offset) => {
     const chars = box.replace(/<[^<>]*>|&nbsp;|\s/g, '');
-    if (!/\d/.test(chars) || YEAR.test(chars)
-      || badSurroundings(text, chars, start, start + box.length)) return hit;
+    if (!firstAfter(text, ranges, offset) || !/\d/.test(chars) || YEAR.test(chars)
+      || /[\d.,/]$/.test(text.slice(Math.max(0, offset - 1), offset))
+      || insideProtectedSpan(text, offset, offset + box.length)) return box;
     let first = true;
-    const masked = box.replace(/<[^<>]*>|&nbsp;|\s+|([A-Z0-9])/gi, (part, char) => {
-      if (!char) return part;
+    return box.replace(/<[^<>]*>|&nbsp;|\s+|([A-Z0-9])/g, (part, char) => {
+      if (!char) return part.startsWith('<') ? part : '';
       const out = first ? MASK : '';
       first = false;
       return out;
     });
-    return hit.slice(0, hit.length - box.length) + masked;
   });
+}
+
+function standsAlone(text, start, end) {
+  const before = text.slice(Math.max(0, start - 200), start);
+  const after = text.slice(end, end + 200);
+  return /(?:^|\n|>)(?:[^\S\n]|&nbsp;)*$/.test(before) && /^(?:[^\S\n]|&nbsp;|[.!])*(?:$|\r?\n|<)/.test(after);
 }
 
 function hiddenAt(text, index, blocks) {
@@ -291,14 +310,13 @@ function maskAfterAnnouncement(text) {
   const blocks = [...text.matchAll(HIDDEN_BLOCK)].map((b) => [b.index, b.index + b[0].length]);
   const tokens = [...text.matchAll(LOOSE_TOKEN)];
   const hits = new Map();
-  for (const a of text.matchAll(new RegExp(STRONG, 'giu'))) {
-    const from = a.index + a[0].length;
-    for (const t of tokens) {
-      if (t.index < from || t.index >= from + LOOSE_REACH || NOT_A_CODE.test(t[0])
-        || hiddenAt(text, t.index, blocks)
-        || badSurroundings(text, t[0], t.index, t.index + t[0].length)) continue;
-      hits.set(t.index, t[0].length);
-    }
+  for (const [from, to] of announcementRanges(text)) {
+    const found = tokens.filter((t) => t.index >= from && t.index < to && !NOT_A_CODE.test(t[0])
+      && !hiddenAt(text, t.index, blocks)
+      && !badSurroundings(text, t[0], t.index, t.index + t[0].length));
+    const alone = found.filter((t) => standsAlone(text, t.index, t.index + t[0].length));
+    const chosen = alone.length || text.slice(from, to).includes(MASK) ? alone : found.slice(0, 1);
+    for (const t of chosen) hits.set(t.index, t[0].length);
   }
   let out = text;
   for (const [index, length] of [...hits].sort((x, y) => y[0] - x[0])) {
@@ -308,8 +326,8 @@ function maskAfterAnnouncement(text) {
 }
 
 function maskAll(text, strong) {
-  let masked = maskCodes(text);
-  if (strong) masked = maskBoxes(masked);
+  let masked = strong ? maskBoxes(text) : text;
+  masked = maskCodes(masked);
   masked = replaceCode(NEXT_TOKEN, masked, (code) => lettersOnlyLower(code) || YEAR.test(code));
   const near = nearIn(masked);
   const before = masked;

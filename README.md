@@ -202,7 +202,7 @@ details:
 
 - The OTP filter masks a code-shaped string (four digits, 3+3 digits, spaced
   digits, five to eight alphanumerics with a digit) only when a keyword such as
-  code, TAN, PIN, OTP, verification, one-time, guard, "enter this", "confirm
+  code, TAN, PIN, OTP, verification, one-time, guard, "enter this code", "confirm
   your email" or a German compound like Bestätigungscode stands within 40
   characters or when the message itself is a 2FA mail (keyword in the subject or a sender like `verify@` or `2fa@`).
   Text that announces a code strongly (OTP, TAN, one-time password, "your
@@ -220,8 +220,8 @@ details:
   `In-Reply-To`/`References` or with the same subject without
   `Re:`/`AW:`/`Fwd:`/`WG:` prefixes, a shared participant and a date within 180
   days. A reply under a subject that shares none of those words is not found.
-  `incomplete: true` means the search hit its page limit or did not find the
-  message itself (typical for subjects with umlauts). HTML is converted to
+  `incomplete: true` means the search hit its page limit or could not confirm
+  that it found the message itself (typical for subjects with umlauts). HTML is converted to
   text and quoted history is cut (Outlook, Gmail, Proton and Apple markers,
   "Am ... schrieb", "On ... wrote", `>` lines), so each message shows only its
   own text; `quotes: true` keeps everything.
@@ -245,7 +245,7 @@ details:
 npm test
 ```
 
-102 cases. Two of them are skipped unless you point them at extras:
+104 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

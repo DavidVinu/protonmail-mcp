@@ -396,7 +396,29 @@ test('Round five: login footers, security senders and digit runs stay readable',
     'Your verification code:<td>[...]</td><td></td><td></td><td></td>');
 });
 
-test('A charset after an announcement stay readable', () => {
+test('A charset after an announcement stays readable', () => {
   const t = 'Your one-time password\nContent-Type: text/html; charset=utf-8';
   assert.equal(redact(t), t);
+});
+
+test('Round six: boxes further down, footers, status words and stray digits', () => {
+  for (const t of ['Your verification code is below.<table><tr><td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td></tr></table>',
+    'Your verification code</h1><p>Enter it in the app.</p><table><tr><td>4</td><td>8</td><td>2</td><td>9</td></tr></table>',
+    'Your OTP is ready.<div>see</div> Q 7 X 2 9', 'Your code:4 8 2 9 1 3',
+    'From: security@example.com\nSubject: Hello\n\nEnter 482913 to continue',
+    'Your SMS from +14155551234 4829 is your code']) {
+    assert.ok(!/[2-9]/.test(redact(t).replace(/\+14155551234/, '')), t);
+  }
+  assert.equal(redact('Your OTP: Q 7 X 2'), 'Your OTP: [...]');
+  assert.ok(redact('Your verification code is 482913. Order shipped, invoice RE-2026-0042, room B250.')
+    .endsWith('invoice RE-2026-0042, room B250.'));
+  assert.equal(redact('Two-factor: enabled. MFA: active. TAN: Danke'), 'Two-factor: enabled. MFA: active. TAN: Danke');
+  const footer = 'Please use the following link to reset: Order 48291 ships, ref AB12CD';
+  assert.equal(redact(footer), footer);
+});
+
+test('A US address and a regulator authorisation code stay readable', () => {
+  for (const t of ['548 Market St, San Francisco, CA 94104', 'registration number of 304580906 and authorisation code of 900562']) {
+    assert.equal(redact(t), t, t);
+  }
 });
