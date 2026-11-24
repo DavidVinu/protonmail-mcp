@@ -422,3 +422,12 @@ test('A US address and a regulator authorisation code stay readable', () => {
     assert.equal(redact(t), t, t);
   }
 });
+
+test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note', () => {
+  for (const t of ['Your verification code: a 7 x 2 9', 'Your 2FA code<td>a</td><td>7</td><td>x</td><td>2</td>',
+    'Gib diese Zahlen ein: 4829', 'Your Steam Guard code: GB 48291', 'Your security code for order ID 48291',
+    'Your code\n\n7 3 1 5\n\n2 8 4 6',
+    'Your code is valid for 10 min.<table><tr><td>4</td><td>8</td><td>2</td><td>9</td></tr></table>']) {
+    assert.ok(!/[2-9]\D*[2-9]/.test(redact(t).replace(/10 min/, '')), t);
+  }
+});

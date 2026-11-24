@@ -54,7 +54,7 @@ const LAYOUT_BEFORE = /(?<![a-z-])(?:(?:width|height|size|padding|margin|spacing
 const PROTECTED = [
   /\b[A-Z]{2}\d{2}(?:[  ]?[A-Z0-9]{4}){2,8}\b/g,        // IBAN
   /\b\d{5}(?=[  ]+[A-ZÄÖÜ])/g,                          // postcode + city
-  /(?<=\b[A-Z]{2}[ \u00a0])\d{5}(?:-\d{4})?\b/g,
+  /(?<=,[ \u00a0][A-Z]{2}[ \u00a0])\d{5}(?:-\d{4})?\b/g,
   /\b\d{1,3}(?:[. ]\d{3})+(?:,\d{2})?\b/g,              // 1.234.567,89
   /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g,                    // ISO date
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
@@ -153,7 +153,7 @@ const KEYWORDS = [
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
   String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)`,
   `verif[${L}]*`, `authenti[${L}]*`, CODE_WORD, 'guard',
-  String.raw`(?:use|enter|gib|nutze|verwende)[^\S\n]+(?:this|these|the[^\S\n]+following|following|diesen?|folgenden?)[^\S\n]+(?:code|number|nummer|zahl|pin|digits|ziffern)`,
+  String.raw`(?:use|enter|gib|nutze|verwende)[^\S\n]+(?:this|these|the[^\S\n]+following|following|diesen?|folgenden?)[^\S\n]+(?:codes?|numbers?|nummern?|zahlen|zahl|pin|digits|ziffern)`,
   String.raw`(?:use|enter)[^\S\n]+(?:this|it)[^\S\n]+to[^\S\n]+(?:sign|log)[-\s]?in`,
   String.raw`(?:confirm|best(?:ä|ae)tig)[${L}]*[^\S\n]+(?:(?:sie|your|ihre?|deine?)[^\S\n]+)?(?:e-?mail|account|konto|identity|identität|login|anmeldung)`,
 ];
@@ -186,7 +186,7 @@ const STRONG_LABELLED = new RegExp(
   STRONG + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*)?:[^\S\n]*([a-z0-9](?:-?[a-z0-9]){3,11})${END}`, 'giu');
 const LONG_NUMBER = new RegExp(`${START}(\\d{9,10})${END}`, 'g');
 const BOX_GAP = String.raw`(?:\s|<[^<>]*>|&nbsp;)+`;
-const BOXED = new RegExp(String.raw`(?<![A-Za-z0-9])[A-Z0-9](?:${BOX_GAP}[A-Z0-9](?![A-Za-z0-9])){3,9}`, 'g');
+const BOXED = new RegExp(String.raw`(?<![A-Za-z0-9])[A-Za-z0-9](?:${BOX_GAP}[A-Za-z0-9](?![A-Za-z0-9])){3,9}`, 'g');
 const PROSE = new Set(['please', 'contact', 'see', 'below', 'above', 'follows', 'none', 'not',
   'required', 'optional', 'sent', 'expired', 'invalid', 'bitte', 'siehe', 'unten', 'oben', 'folgt',
   'nicht', 'keine', 'kein', 'erforderlich', 'gesendet', 'abgelaufen', 'ungültig', 'nur', 'only',
@@ -275,8 +275,9 @@ function announcementRanges(text) {
     .map((a) => [a.index + a[0].length, a.index + a[0].length + LOOSE_REACH]);
 }
 
+const TIME = /\d+[^\S\n]*(?:min(?:ute[ns]?|s)?|minuten|h|hours?|stunden?|sec(?:onds?)?|sekunden)(?![a-zäöü])/gi;
 const firstAfter = (text, ranges, index) => ranges.some(([from, to]) => index >= from && index < to
-  && !/\d|\[\.\.\.\]/.test(visible(text.slice(from, index))));
+  && !/\d/.test(visible(text.slice(from, index)).replaceAll(MASK, ' ').replace(TIME, ' ')));
 
 function maskBoxes(text) {
   const ranges = announcementRanges(text);
@@ -284,9 +285,11 @@ function maskBoxes(text) {
     const chars = box.replace(/<[^<>]*>|&nbsp;|\s/g, '');
     if (!firstAfter(text, ranges, offset) || !/\d/.test(chars) || YEAR.test(chars)
       || /[\d.,/]$/.test(text.slice(Math.max(0, offset - 1), offset))
+      || AMOUNT_AFTER.test(text.slice(offset + box.length, offset + box.length + 2))
+      || LAYOUT_BEFORE.test(text.slice(Math.max(0, offset - 20), offset))
       || insideProtectedSpan(text, offset, offset + box.length)) return box;
     let first = true;
-    return box.replace(/<[^<>]*>|&nbsp;|\s+|([A-Z0-9])/g, (part, char) => {
+    return box.replace(/<[^<>]*>|&nbsp;|\s+|([A-Za-z0-9])/g, (part, char) => {
       if (!char) return part.startsWith('<') ? part : '';
       const out = first ? MASK : '';
       first = false;
@@ -315,7 +318,9 @@ function maskAfterAnnouncement(text) {
       && !hiddenAt(text, t.index, blocks)
       && !badSurroundings(text, t[0], t.index, t.index + t[0].length));
     const alone = found.filter((t) => standsAlone(text, t.index, t.index + t[0].length));
-    const chosen = alone.length || text.slice(from, to).includes(MASK) ? alone : found.slice(0, 1);
+    const mask = text.indexOf(MASK, from);
+    const codeMasked = mask >= 0 && mask < to && (!found.length || mask < found[0].index);
+    const chosen = alone.length || codeMasked ? alone : found.slice(0, 1);
     for (const t of chosen) hits.set(t.index, t[0].length);
   }
   let out = text;
