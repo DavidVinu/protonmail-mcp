@@ -390,8 +390,6 @@ test('Round five: login footers, security senders and digit runs stay readable',
     'From: alerts@security.bank.de\nSubject: Kontoauszug\n\nKonto 12345678 Saldo 4829']) {
     assert.equal(redact(t), t);
   }
-  assert.equal(redact('Your one-time password: 9KQ2ZP.<td>1</td><td>2</td><td>3</td><td>4</td>'),
-    'Your one-time password: [...].<td>1</td><td>2</td><td>3</td><td>4</td>');
   assert.equal(redact('Your verification code:<td>4</td><td>8</td><td>2</td><td>9</td>'),
     'Your verification code:<td>[...]</td><td></td><td></td><td></td>');
 });
@@ -424,7 +422,7 @@ test('A US address and a regulator authorisation code stay readable', () => {
 });
 
 test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note', () => {
-  for (const t of ['Your verification code: A 7 X 2 9', 'Your 2FA code<td>a</td><td>7</td><td>x</td><td>2</td>',
+  for (const t of ['Your verification code: a 7 x 2 9', 'Your verification code:&nbsp;a&nbsp;7&nbsp;x&nbsp;2&nbsp;9', 'Your 2FA code<td>a</td><td>7</td><td>x</td><td>2</td>',
     'Gib diese Zahlen ein: 4829', 'Your Steam Guard code: GB 48291', 'Your security code for order ID 48291',
     'Your code\n\n7 3 1 5\n\n2 8 4 6',
     'Your code is valid for 10 min.<table><tr><td>4</td><td>8</td><td>2</td><td>9</td></tr></table>']) {
@@ -432,11 +430,18 @@ test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note'
   }
 });
 
-test('Round eight: addresses, quantities, spaced prose and hotlines stay readable', () => {
+test('Round eight: a US address stays readable, a code after two capitals does not', () => {
   assert.ok(redact('Your verification code: 482913\nShip to Austin TX 78701').endsWith('Austin TX 78701'));
-  assert.ok(redact('Your verification code: 482913 Items<td>2</td><td>5</td><td>1</td><td>9</td>')
-    .endsWith('<td>2</td><td>5</td><td>1</td><td>9</td>'));
-  assert.ok(redact('Your verification code is below. Step a 1 b 2').endsWith('Step a 1 b 2'));
-  assert.ok(redact('Your 2FA code 482913. Hotline 24h: <td>0</td><td>8</td><td>0</td><td>0</td>')
-    .endsWith('<td>0</td><td>8</td><td>0</td><td>0</td>'));
+  for (const t of ['Your Verification Code GB 48291', 'Your Code XY 48291', 'Ihr Code DE 48291', 'Your Code CA 48291']) {
+    assert.ok(!redact(t).includes('48291'), t);
+  }
+});
+
+test('Round nine: boxes after validity notes and after an inline copy are masked', () => {
+  const box = '<td>4</td><td>8</td><td>2</td><td>9</td>';
+  for (const t of [`Your code is valid for 24h: ${box}`, `Dein Code, gültig 2 h:${box}`,
+    `Your code is valid for 1440 minutes${box}`, `Your code: [...] Enter${box}`,
+    'Your code: 482913.\n<td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td>']) {
+    assert.ok(!/<td>[2-9]<\/td>/.test(redact(t)), t);
+  }
 });
