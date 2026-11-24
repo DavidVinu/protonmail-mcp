@@ -23,6 +23,11 @@ import fs from 'node:fs';
 const argv = process.argv.slice(2);
 fs.appendFileSync(process.env.MOCK_LOG,
   JSON.stringify({ argv, env: process.env }) + '\\n');
+const routes = JSON.parse(process.env.MOCK_ROUTES ?? '{}');
+if (argv.join(' ') in routes) {
+  process.stdout.write(routes[argv.join(' ')]);
+  process.exit(0);
+}
 // The recipient check reads the original with 'read --raw'; that call gets its
 // own output and its own exit code, so a test can make the check fail without
 // making every other call fail too.
@@ -151,4 +156,5 @@ export const EVERY_TOOL = [
   ['message_forward', { id: '1', mailbox: 'inbox', body: 'T', save: true }],
   ['message_compose', { to: 'a@x.org', subject: 'S', body: 'T', save: true }],
   ['message_reply', { id: '1', mailbox: 'inbox', body: 'T', save: true }],
+  ['thread_read', { id: '1', mailbox: 'inbox' }],
 ];

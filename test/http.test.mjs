@@ -183,7 +183,7 @@ test('The discovery paths give nothing away about the token', async () => {
 
 // ----------------------------------------------------------------- tools ----
 
-test('The server offers the same thirteen tools as stdio', async () => {
+test('The server offers the same fourteen tools as stdio', async () => {
   const init = await post(INIT);
   assert.equal(init.status, 200);
   const session = init.session;
@@ -199,7 +199,7 @@ test('The server offers the same thirteen tools as stdio', async () => {
     'attachment_download', 'attachment_list', 'attachment_read', 'envelope_list',
     'envelope_search', 'flag_add', 'flag_remove', 'mailbox_list',
     'message_compose', 'message_forward', 'message_move', 'message_read',
-    'message_reply',
+    'message_reply', 'thread_read',
   ]);
   for (const forbidden of ['send', 'delete', 'delegate', 'forward_address']) {
     assert.ok(!names.some((n) => n.includes(forbidden)),

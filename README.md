@@ -9,7 +9,7 @@ It talks to [Proton Mail Bridge](https://proton.me/mail/bridge) through
 Bridge can serve, including the folders where imported Gmail or other mail
 lives.
 
-Two entry points, same thirteen tools:
+Two entry points, same fourteen tools:
 
 | | |
 | - | - |
@@ -164,8 +164,9 @@ All optional.
 | - | - | - |
 | `mailbox_list` | folders | |
 | `envelope_list` | envelopes of a folder | |
-| `envelope_search` | himalaya query syntax | |
+| `envelope_search` | himalaya query syntax, `All Mail` by default | |
 | `message_read` | one message; does **not** set the seen flag | |
+| `thread_read` | a whole conversation from `All Mail`, oldest first | |
 | `attachment_list` | part ids, names, types, sizes | |
 | `attachment_download` | | files, into the quarantine only |
 | `attachment_read` | one attachment's text (text files, PDFs), paged and filtered | |
@@ -199,11 +200,23 @@ details:
 
 ## Known edges
 
-- The OTP filter has two layers. Layer 1 masks codes in place. Layer 2 blanks
-  the **whole** string when it merely *announces* a code. A reply preview quotes
-  the original, so replying to a message about a confirmation code hides your
-  own draft text as well. The draft is still created correctly; only the
-  preview is empty.
+- The OTP filter masks a code-shaped string (four digits, 3+3 digits, spaced
+  digits, five to eight alphanumerics with a digit) only when a keyword such as
+  code, TAN, PIN, OTP, verification, one-time or a German compound like
+  Bestätigungscode stands within 40 characters, or when the message itself is a
+  2FA mail (keyword in the subject, or a sender like `security@`, `verify@`).
+  Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
+  and amounts are never masked. A code with no keyword nearby in a mail without
+  a 2FA subject or sender gets through; that is the price of readable mail.
+- `envelope_search` passes the query to himalaya. Each condition takes one
+  word. Quoted phrases do not work in himalaya against Proton Bridge, so the
+  server splits `subject "a b"` into `(subject a and subject b)`. Bridge matches
+  the encoded raw text, so words with umlauts, and words that straddle an
+  encoded-word boundary in a long subject, are often not found.
+- `thread_read` finds the conversation by subject search in `All Mail` and then
+  keeps messages linked by `In-Reply-To`/`References` or carrying the same
+  subject without `Re:`/`AW:`/`Fwd:`/`WG:` prefixes. A reply under a new subject
+  is found only through its link.
 - The recipient rule fails closed: if the original cannot be read, no draft is
   created. A rule that quietly stops applying when the mailbox is down is not a
   rule.
@@ -211,10 +224,8 @@ details:
   carries its secret as a QR code, and no text filter sees into a picture.
   Office formats and scanned PDFs are refused too; `attachment_download` still
   stores them for you.
-- On attachments the filter runs per PDF page rather than on the whole
-  document, so one page that mentions a TAN does not blank the entire contract.
 - The filter's word list is bilingual (English and German), because the mailbox
-  it was built for is. Adding a language means extending `OTP_WORDS` in
+  it was built for is. Adding a language means extending `KEYWORDS` in
   `src/otp-filter.mjs`.
 
 ## Tests
@@ -223,7 +234,7 @@ details:
 npm test
 ```
 
-57 cases. Three of them are skipped unless you point them at extras:
+71 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character
@@ -241,7 +252,7 @@ invisible until a code reaches a model. So the copies are compared by
 Gmail identifies messages by opaque hex strings where IMAP uses decimal UIDs.
 `scrub` and `STRUCTURAL_FIELDS` are excluded for exactly that reason.
 
-A fourth is skipped when `himalaya` is not installed: it runs every tool and
+A third is skipped when `himalaya` is not installed: it runs every tool and
 checks each option the server builds against `himalaya <subcommand> --help`.
 That case exists because two real defects got through a contract that only
 pinned *which* argv the server builds and never asked whether the other end

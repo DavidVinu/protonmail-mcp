@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import test from 'node:test';
 
+import { shares } from '../src/tools.mjs';
 import {
   ATTACHMENT_DIR, EVERY_TOOL, OWN_ADDRESS, TO_OWN, answerTo, callServer, tool,
 } from './helpers.mjs';
@@ -53,7 +54,7 @@ test('The tool list contains no way to send', async () => {
     'attachment_download', 'attachment_list', 'attachment_read', 'envelope_list',
     'envelope_search', 'flag_add', 'flag_remove', 'mailbox_list',
     'message_compose', 'message_forward', 'message_move', 'message_read',
-    'message_reply',
+    'message_reply', 'thread_read',
   ]);
 });
 
@@ -357,7 +358,7 @@ test('attachment_read returns a text attachment, filtered, and leaves nothing be
   const { answers, seen } = await callServer(
     [tool('attachment_read', { id: '7', mailbox: 'inbox', part: '2' })],
     { env: attachment('notes.txt', 'text/plain',
-      'Meeting at 10:00 in room B.\nReference 416107 attached.') });
+      'Meeting at 10:00 in room B.\nYour login code: 416107') });
   const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
   assert.equal(data.filename, 'notes.txt');
   assert.ok(data.text.includes('Meeting at 10:00'), data.text);
@@ -369,7 +370,7 @@ test('attachment_read returns a text attachment, filtered, and leaves nothing be
 
 test('attachment_read extracts PDF text and filters it page by page', async () => {
   const pages = ['Contract terms, page one.',
-    'Confirm with the TAN from your app.',
+    'Confirm with the TAN 553201 from your app. Hotline +49 30 555012-25.',
     'Signed in Heidelberg.'];
   const { answers, pdftotext } = await callServer(
     [tool('attachment_read', { id: '7', part: '2', page: 2, pageCount: 2 })],
@@ -382,7 +383,8 @@ test('attachment_read extracts PDF text and filters it page by page', async () =
   assert.equal(data.pages, 3);
   assert.deepEqual(data.shown, [2, 3]);
   const [two, three] = data.text.split('\f');
-  assert.ok(!two.includes('TAN'), 'the page announcing a code is blanked');
+  assert.equal(two, 'Confirm with the TAN [...] from your app. Hotline +49 30 555012-25.',
+    'only the code is masked, the phone number stays');
   assert.equal(three, 'Signed in Heidelberg.', 'the other pages stay readable');
   assert.ok(!data.text.includes('page one'), 'page 1 is not shown');
 });
@@ -404,4 +406,77 @@ test('attachment_read ends softly when the mailbox is unreachable', async () => 
   const a = answerTo(answers, 2).result;
   assert.ok(!a.isError);
   assert.equal(JSON.parse(a.content[0].text).soft, true);
+});
+
+// ------------------------------------------------------------ search, thread --
+
+test('envelope_search searches All Mail by default and splits quoted phrases', async () => {
+  const { seen } = await callServer([tool('envelope_search',
+    { query: 'subject "AG Vernetzung & KI" and body "nächste Sitzung"' })],
+  { stdout: '{"envelopes":[]}' });
+  assert.deepEqual(seen.argv, ['envelope', 'search', '--mailbox', 'All Mail',
+    '--page-size', '20', '--has-attachment', '--json',
+    '(subject AG and subject Vernetzung and subject KI) and body Sitzung']);
+});
+
+test('envelope_search documents the query syntax', async () => {
+  const { answers } = await callServer([
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ]);
+  const search = answerTo(answers, 2).result.tools.find((t) => t.name === 'envelope_search');
+  for (const word of ['subject', 'body', 'from', ' or ', ' and ', 'order by', '"']) {
+    assert.ok(search.description.includes(word), `missing ${word}`);
+  }
+});
+
+const envelope = (id, mid, irt, subject, date, email = 'hb@example.org') => ({
+  id, 'message-id': mid, 'in-reply-to': irt, subject, date,
+  from: [{ name: 'X', email }],
+});
+
+test('thread_read returns linked and same-subject messages in chronological order', async () => {
+  const subject = 'AG Vernetzung & KI – Infos und nächste Sitzung';
+  const search = JSON.stringify({ envelopes: [
+    envelope('30', 'c@x', ['b@x'], `AW: ${subject}`, '2026-10-13T09:00:00Z'),
+    envelope('99', 'z@x', [], 'AG Vernetzung Protokoll', '2026-10-12T09:30:00Z'),
+    envelope('20', 'b@x', [], `Re: ${subject}`, '2026-10-12T20:00:00Z', OWN_ADDRESS),
+    envelope('10', 'a@x', [], subject, '2026-10-12T08:00:00Z'),
+    envelope('40', 'd@x', ['c@x'], 'Antwort mit neuem Betreff', '2026-11-02T13:00:00Z'),
+  ] });
+  const signature = 'Tel.: +49 30 555012-25, Sitzung am 10.10.2026';
+  const read = (id, text) => [`message read ${id} --mailbox All Mail`, text];
+  const routes = Object.fromEntries([
+    ['message read 20 --mailbox inbox', `Subject: Re: ${subject}\n\nhi`],
+    ['message read 20 --mailbox inbox --raw',
+      'Message-Id: <b@x>\nReferences: <internal@proton>\nSubject: =?utf-8?q?x?=\n\nhi'],
+    ['envelope search --mailbox All Mail --page 1 --page-size 100 --json '
+      + 'subject vernetzung or subject sitzung or subject infos', search],
+    read('10', `Subject: ${subject}\n\nStart. ${signature}`),
+    read('20', 'Zusage'),
+    read('30', 'Your login code: 416107'),
+    read('40', 'Antwort'),
+  ]);
+  const { answers, calls } = await callServer(
+    [tool('thread_read', { id: '20', mailbox: 'inbox' })],
+    { env: { MOCK_ROUTES: JSON.stringify(routes) } });
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.mailbox, 'All Mail');
+  assert.deepEqual(data.messages.map((m) => m.id), ['10', '20', '30', '40']);
+  assert.ok(data.messages[0].text.includes(signature), 'the signature stays readable');
+  assert.equal(data.messages[2].text, 'Your login code: [...]');
+  assert.equal(data.omitted, 0);
+  assert.ok(calls.every((c) => !c.argv.includes('--seen')), 'reading leaves seen alone');
+});
+
+test('thread_read ends softly when the bridge is down', async () => {
+  const { answers } = await callServer([tool('thread_read', { id: '1' })],
+    { code: 1, stdout: 'Error: connection refused (os error 111)' });
+  const a = answerTo(answers, 2).result;
+  assert.ok(!a.isError);
+  assert.equal(JSON.parse(a.content[0].text).soft, true);
+});
+
+test('thread_read gives short messages their full length and splits the rest', () => {
+  assert.deepEqual(shares([10, 500, 30, 900], 300), [10, 130, 30, 130]);
+  assert.deepEqual(shares([5, 5], 300), [5, 5]);
 });

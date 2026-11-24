@@ -15,7 +15,6 @@
 // incident behind it; the comments name them.
 
 export const MASK = '[...]';
-export const REDACTED = '[one-time code hidden]';
 
 // --- Shapes a code can take -------------------------------------------------
 // Start: beginning of line, or a character that cannot be part of a longer
@@ -58,6 +57,7 @@ const PROTECTED = [
   /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g,                    // ISO date
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
   /\b(?:19|20)\d{2}-\d{2}\b/g,                          // 2026-09
+  /\+\d{1,3}(?:[ \/-]?\(?\d+\)?)+/g,
 ];
 
 /** Does a protected span cover the candidate completely? */
@@ -86,8 +86,7 @@ function isFalsePositive(text, raw, start, end) {
   return false;
 }
 
-/** Layer 1: mask individual codes, leave everything else readable. */
-export function maskCodes(text) {
+export function maskCodes(text, near = () => true) {
   if (typeof text !== 'string' || !text) return text;
   const parts = [];
   let last = 0;
@@ -96,7 +95,7 @@ export function maskCodes(text) {
     const raw = m[1];
     const start = m.index + m[0].indexOf(raw);
     const end = start + raw.length;
-    if (isFalsePositive(text, raw, start, end)) continue;
+    if (isFalsePositive(text, raw, start, end) || !near(start, end)) continue;
     parts.push(text.slice(last, start), MASK);
     last = end;
   }
@@ -104,41 +103,57 @@ export function maskCodes(text) {
   return parts.join('');
 }
 
-// --- Announcement words ------------------------------------------------------
-// Based on AOSP's ENGLISH_CONTEXT_WORDS, extended with German compounds; the
-// author's mailbox is bilingual and a filter that only speaks English would
-// miss half of it. Deliberately narrow: layer 1 already catches every visible
-// code, so this layer only exists for text that ANNOUNCES a code without
-// containing it as a literal string.
-const OTP_WORDS = new RegExp(
-  '('
-  + String.raw`\b(tan|otp|2fa|mfa|(two|2)[-\s]?factor|zwei[-\s]?faktor)\b|`
-  // Note the separator class. Requiring the two word parts to be adjacent
-  // misses "one-time password" and "one-time code", the two most common
-  // English phrasings there are. Found 2026-09-06 while writing the contract
-  // test, in a version that had been running for weeks.
-  + String.raw`\b(one[-\s]?time|einmal[-\s]?)[-\s]?(code|kennwort|passwort|passcode|password)\b|`
-  + String.raw`\bpasscode\b|`
-  // Any word ending in "code" is suspicious in German (Zugangscode,
-  // Bestaetigungscode, Sicherheitscode ...) except these, which are ordinary.
-  + String.raw`\b(?!(?:bar|qr|quell|uni|dress|post|zip|l[äa]nder|farb|morse|geo)code\b)`
-  + String.raw`[a-zäöüß]{3,}code\b|`
-  + String.raw`\b(login|log[-\s]?in|auth|authy|sms|pin|zugangs)[-\s]?code\b|`
-  + String.raw`\b(verification|security|access|confirmation) code\b|`
-  + String.raw`\bfreigabe\b)`,
-  'i',
+// --- Context -----------------------------------------------------------------
+export const WINDOW = 40;
+
+const L = 'a-zäöüß';
+const CODE_WORD = String.raw`(?!(?:bar|qr|quell|uni|dress|post|zip|l[äa]nder|farb|morse|geo|source|country|area|colou?r)code)[${L}]*code`;
+const KEYWORDS = [
+  'tan', 'otp', 'pin', '2fa', 'mfa', 'token', 'passcode', 'passwor[dt]', 'kennwort',
+  String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
+  String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)`,
+  `verif[${L}]*`, `authenti[${L}]*`, CODE_WORD,
+];
+const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`, 'iu');
+
+const SENDER_TOKENS = new Set(['verify', 'verification', 'security', 'otp', '2fa',
+  'mfa', 'auth', 'login', 'signin', 'accountprotection', 'passcode']);
+
+const LABELLED = new RegExp(
+  `(?<![${L}])(?:${CODE_WORD}|tan|pin|otp|passcode|token|passwor[dt]|kennwort)`
+  + String.raw`[^\S\n]*(?:is|ist|lautet)?[^\S\n]*:[^\S\n]*([A-Z0-9](?:-?[A-Z0-9]){3,11})${END}`,
+  'giu',
 );
 
-/** Layer 2: blank the whole text if it announces a code; else mask in place.
- *
- * Known edge: this blanks the ENTIRE string. A reply preview quotes the
- * original message, so replying to a mail about a confirmation code hides
- * your own draft text behind REDACTED as well. The draft itself is still
- * created correctly; only the preview is empty.
- */
-export function redact(text) {
-  if (!text) return text;
-  return OTP_WORDS.test(text) ? REDACTED : maskCodes(text);
+export function hasContext(text) {
+  return typeof text === 'string' && CONTEXT.test(text);
+}
+
+export function isTwoFactorMail({ subject = '', from = '' } = {}) {
+  if (hasContext(subject)) return true;
+  const local = String(from).match(/([^\s<"@]+)@/)?.[1]?.toLowerCase() ?? '';
+  return local.split(/[-._+]/).some((t) => SENDER_TOKENS.has(t));
+}
+
+export function headersOf(text) {
+  const head = text.split(/\r?\n\r?\n/, 1)[0];
+  const field = (name) => new RegExp(`^${name}:[^\\S\\n]*(.*)$`, 'mi').exec(head)?.[1] ?? '';
+  return { subject: field('Subject'), from: field('From') };
+}
+
+function maskLabelled(text) {
+  return text.replace(LABELLED, (hit, code) => {
+    if (!/\d/.test(code) && code !== code.toUpperCase()) return hit;
+    return hit.slice(0, hit.length - code.length) + MASK;
+  });
+}
+
+export function redact(text, { twoFactor = false } = {}) {
+  if (typeof text !== 'string' || !text) return text;
+  if (twoFactor || isTwoFactorMail(headersOf(text))) return maskLabelled(maskCodes(text));
+  const near = (start, end) => hasContext(
+    text.slice(Math.max(0, start - WINDOW), end + WINDOW));
+  return maskLabelled(maskCodes(text, near));
 }
 
 // --- Structural fields -------------------------------------------------------
@@ -158,14 +173,19 @@ function isUid(key, value, structuralFields) {
     && typeof value === 'string' && DIGITS_ONLY.test(value);
 }
 
-/** Clean a JSON structure field by field; shape and numbers stay untouched. */
-export function scrub(value, structuralFields = STRUCTURAL_FIELDS) {
-  if (typeof value === 'string') return redact(value);
-  if (Array.isArray(value)) return value.map((x) => scrub(x, structuralFields));
+function envelopeOf(value) {
+  const from = [value.from].flat().map((f) => (typeof f === 'string' ? f : f?.email ?? '')).join(' ');
+  return { subject: typeof value.subject === 'string' ? value.subject : '', from };
+}
+
+export function scrub(value, structuralFields = STRUCTURAL_FIELDS, twoFactor = false) {
+  if (typeof value === 'string') return redact(value, { twoFactor });
+  if (Array.isArray(value)) return value.map((x) => scrub(x, structuralFields, twoFactor));
   if (value && typeof value === 'object') {
+    const mail = twoFactor || isTwoFactorMail(envelopeOf(value));
     const out = {};
     for (const [k, v] of Object.entries(value)) {
-      out[k] = isUid(k, v, structuralFields) ? v : scrub(v, structuralFields);
+      out[k] = isUid(k, v, structuralFields) ? v : scrub(v, structuralFields, mail);
     }
     return out;
   }

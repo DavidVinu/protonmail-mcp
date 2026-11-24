@@ -1,7 +1,7 @@
 // The tools of the Proton Mail MCP server, shared by the stdio and HTTP entry
 // points. Neither the transport nor the process environment is decided here.
 //
-// WHAT THE BOUNDARY IS. This server offers thirteen fixed tools. Every argv is
+// WHAT THE BOUNDARY IS. This server offers fourteen fixed tools. Every argv is
 // assembled from typed parameters; there is no free-form command, no send
 // path, no delete path, and no shell. A permission system could express all
 // of that -- it is a question of WHETHER a tool may run.
@@ -31,6 +31,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { redact, scrub } from './otp-filter.mjs';
+import { ALL_MAIL, MAX_MESSAGES, collectThread } from './thread.mjs';
 
 const FLAGS = ['seen', 'answered', 'flagged'];
 
@@ -245,6 +246,28 @@ async function extract(config, file, mime) {
     + 'attachment_download stores it in the quarantine for the user.' };
 }
 
+export function shares(lengths, total) {
+  const out = new Array(lengths.length);
+  let left = total;
+  const order = lengths.map((n, i) => [n, i]).sort((a, b) => a[0] - b[0]);
+  order.forEach(([n, i], k) => {
+    out[i] = Math.min(n, Math.floor(left / (order.length - k)));
+    left -= out[i];
+  });
+  return out;
+}
+
+export function splitPhrases(query) {
+  return query.replace(/\b(from|to|subject|body)\s+"([^"]*)"/gi, (whole, field, phrase) => {
+    const words = phrase.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    const ascii = words.filter((w) => !/[^\x00-\x7f]/.test(w));
+    const used = ascii.length ? ascii : words;
+    if (!used.length) return whole;
+    const parts = used.map((w) => `${field} ${w}`);
+    return parts.length === 1 ? parts[0] : `(${parts.join(' and ')})`;
+  });
+}
+
 export function register(server, config = resolveConfig()) {
   // ------------------------------------------------------------- reading ----
   // Read paths are soft: if the mail bridge drops out mid-run, a note comes
@@ -276,17 +299,58 @@ export function register(server, config = resolveConfig()) {
   });
 
   server.registerTool('envelope_search', {
-    description: 'Search the mailbox. The query uses himalaya syntax, '
-      + 'for example: from alice and subject invoice.',
+    description: 'Search envelopes. Defaults to "All Mail", so archived and sent '
+      + 'mail is found too; the returned ids are UIDs of the searched folder, so '
+      + 'pass the same mailbox to message_read. Query syntax (himalaya): '
+      + 'conditions from <text>, to <text>, subject <text>, body <text>, '
+      + 'date <yyyy-mm-dd>, after <yyyy-mm-dd>, flag <seen|answered|flagged|draft>; '
+      + 'combine with and, or, not and parentheses; sort with order by '
+      + '<date|from|to|subject> [asc|desc]. Each condition takes ONE word and '
+      + 'matches it as a case-insensitive substring. A quoted phrase is split into '
+      + 'one condition per word joined with and, so word order is not checked. '
+      + 'Proton Bridge matches the encoded text, so words with umlauts or other '
+      + 'non-ASCII letters usually find nothing: search Sitzung, not nächste. '
+      + 'Examples: body Verband; from alice and subject invoice; '
+      + '(subject AG and subject Vernetzung) or from verband; '
+      + 'subject "Infos und Sitzung" and after 2026-10-01 order by date desc; '
+      + 'not flag seen and after 2026-11-20.',
     inputSchema: {
-      mailbox: z.string().default('inbox'),
+      mailbox: z.string().default(ALL_MAIL)
+        .describe('folder; inbox only searches the inbox itself'),
       query: z.string().min(1),
       pageSize: z.number().int().min(1).max(100).default(20),
     },
   }, async ({ mailbox, query, pageSize }) => call(config,
     ['envelope', 'search', '--mailbox', mailbox, '--page-size', String(pageSize),
-      '--has-attachment', '--json', query], { soft: true },
+      '--has-attachment', '--json', splitPhrases(query)], { soft: true },
   ));
+
+  server.registerTool('thread_read', {
+    description: 'Read a whole conversation in chronological order: every '
+      + 'message linked to the given one by In-Reply-To or References, or '
+      + 'carrying the same subject without Re:/AW:/Fwd:/WG: prefixes. Searches '
+      + `"All Mail"; the ids in the answer are All Mail UIDs. At most ${MAX_MESSAGES} `
+      + 'messages, the most recent ones; omitted counts the rest.',
+    inputSchema: {
+      id: z.string().min(1).describe('IMAP UID of any message in the thread'),
+      mailbox: z.string().default(ALL_MAIL).describe('folder the id belongs to'),
+    },
+  }, async ({ id, mailbox }) => {
+    const thread = await collectThread((argv) => run(config, argv), id, mailbox);
+    if (thread.failed) {
+      const { code, out, err } = thread.failed;
+      return failure(code, out, err, true);
+    }
+    const budget = shares(thread.messages.map((m) => m.text.length), MAX_TEXT);
+    const messages = thread.messages.map((m, i) => ({
+      ...m,
+      text: m.text.slice(0, budget[i]),
+      truncated: m.text.length > budget[i],
+    }));
+    return { content: [{ type: 'text', text: JSON.stringify(scrub({
+      mailbox: thread.mailbox, count: messages.length, omitted: thread.omitted, messages,
+    })) }] };
+  });
 
   server.registerTool('message_read', {
     description: 'Read a message. Does NOT set the seen flag.',
@@ -366,9 +430,6 @@ export function register(server, config = resolveConfig()) {
       if (result.error) {
         return { isError: true, content: [{ type: 'text', text: result.error }] };
       }
-      // The filter runs per page. Its second layer blanks a whole string that
-      // announces a code; on a whole contract that would hide every page
-      // because one of them mentions a TAN.
       const last = Math.min(result.pages.length, page - 1 + pageCount);
       const shown = result.pages.slice(page - 1, last).map(redact).join('\f');
       return { content: [{ type: 'text', text: JSON.stringify({
