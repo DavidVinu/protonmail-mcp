@@ -31,7 +31,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { redact, scrub } from './otp-filter.mjs';
-import { ALL_MAIL, MAX_MESSAGES, collectThread } from './thread.mjs';
+import { ALL_MAIL, MAX_MESSAGES, QUERY_WORDS, collectThread } from './thread.mjs';
 
 const FLAGS = ['seen', 'answered', 'flagged'];
 
@@ -40,6 +40,9 @@ const FLAGS = ['seen', 'answered', 'flagged'];
 const PART_ID = z.string().regex(/^\d+$/);
 
 const MAX_TEXT = 200000;
+
+const MAILBOX = z.string().min(1).describe('folder the id belongs to, as given in the '
+  + 'envelope (UIDs differ per folder, e.g. inbox or All Mail)');
 
 const DEFAULT_HIMALAYA_CONFIG = '.config/himalaya/config.toml';
 
@@ -262,7 +265,8 @@ function withMailbox(result, mailbox) {
   try {
     const data = JSON.parse(result.content[0].text);
     if (!Array.isArray(data.envelopes)) return result;
-    return { content: [{ type: 'text', text: JSON.stringify({ mailbox, ...data }) }] };
+    const envelopes = data.envelopes.map((e) => ({ ...e, mailbox }));
+    return { content: [{ type: 'text', text: JSON.stringify({ ...data, mailbox, envelopes }) }] };
   } catch {
     return result;
   }
@@ -270,7 +274,7 @@ function withMailbox(result, mailbox) {
 
 export function splitPhrases(query) {
   return query.replace(/\b(from|to|subject|body)\s+"([^"]*)"/gi, (whole, field, phrase) => {
-    const words = phrase.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const words = phrase.split(/[^\p{L}\p{N}]+/u).filter((w) => w && !QUERY_WORDS.has(w.toLowerCase()));
     const ascii = words.filter((w) => !/[^\x00-\x7f]/.test(w));
     const used = ascii.length ? ascii : words;
     if (!used.length) return whole;
@@ -306,7 +310,7 @@ export function register(server, config = resolveConfig()) {
     // that does not know the flag exists. Measured cost on an IMAP backend:
     // none worth mentioning.
     argv.push('--page-size', String(pageSize), '--has-attachment', '--json');
-    return call(config, argv, { soft: true });
+    return withMailbox(await call(config, argv, { soft: true }), mailbox);
   });
 
   server.registerTool('envelope_search', {
@@ -351,7 +355,7 @@ export function register(server, config = resolveConfig()) {
       + 'HTML is converted to text, and quoted history is cut unless quotes is true.',
     inputSchema: {
       id: z.string().min(1).describe('IMAP UID of any message in the thread'),
-      mailbox: z.string().default(ALL_MAIL).describe('folder the id belongs to'),
+      mailbox: MAILBOX,
       quotes: z.boolean().default(false)
         .describe('keep the quoted history in every reply; off, each message shows only its own text'),
     },
@@ -382,7 +386,7 @@ export function register(server, config = resolveConfig()) {
     description: 'Read a message. Does NOT set the seen flag.',
     inputSchema: {
       id: z.string().min(1).describe('IMAP UID; valid only within its folder'),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       raw: z.boolean().default(false).describe('include full headers'),
     },
   }, async ({ id, mailbox, raw }) => {
@@ -396,7 +400,7 @@ export function register(server, config = resolveConfig()) {
       + 'file names, types and sizes.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       inline: z.boolean().default(false)
         .describe('also list inline parts, e.g. images embedded in HTML'),
     },
@@ -412,7 +416,7 @@ export function register(server, config = resolveConfig()) {
       + 'directory and nowhere else; the answer names the path.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       parts: z.array(PART_ID).optional()
         .describe('part ids from attachment_list; all attachments if omitted'),
     },
@@ -431,7 +435,7 @@ export function register(server, config = resolveConfig()) {
       + 'Long documents come back in pages; use page and pageCount to go on.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       part: PART_ID.describe('part id from attachment_list'),
       page: z.number().int().min(1).default(1),
       pageCount: z.number().int().min(1).max(50).default(10),
@@ -488,7 +492,7 @@ export function register(server, config = resolveConfig()) {
       + 'holds even when the draft was explicitly requested.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       body: z.string().min(1),
       save: z.boolean().default(false),
     },
@@ -506,7 +510,7 @@ export function register(server, config = resolveConfig()) {
     description: `Create a forward draft. ${draftNote}`,
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       body: z.string().min(1),
       save: z.boolean().default(false),
     },
@@ -538,7 +542,7 @@ export function register(server, config = resolveConfig()) {
       + 'delete flag is not possible.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       flag: z.enum(FLAGS),
     },
   }, async ({ id, mailbox, flag }) => call(config,
@@ -549,7 +553,7 @@ export function register(server, config = resolveConfig()) {
     description: 'Remove a flag. Same three flags as flag_add.',
     inputSchema: {
       id: z.string().min(1),
-      mailbox: z.string().default('inbox'),
+      mailbox: MAILBOX,
       flag: z.enum(FLAGS),
     },
   }, async ({ id, mailbox, flag }) => call(config,

@@ -205,7 +205,9 @@ details:
   code, TAN, PIN, OTP, verification, one-time or a German compound like
   Bestätigungscode stands within 40 characters, or when the message itself is a
   2FA mail (keyword in the subject, or a sender like `security@`, `verify@`).
-  Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
+  Text that announces a code strongly (OTP, TAN, one-time password, "your
+  code", verification code, Bestätigungscode and the like) is treated as a 2FA
+  mail as a whole. Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
   and amounts are never masked. A code with no keyword nearby in a mail without
   a 2FA subject or sender gets through; that is the price of readable mail.
 - `envelope_search` passes the query to himalaya. Each condition takes one
@@ -222,8 +224,9 @@ details:
   text and quoted history is cut (Outlook, Gmail, Proton and Apple markers,
   "Am ... schrieb", "On ... wrote", `>` lines), so each message shows only its
   own text; `quotes: true` keeps everything.
-- `envelope_search` answers with the `mailbox` it searched. Its ids are UIDs
-  of that folder; the other tools default to `inbox`, so pass the mailbox on.
+- `envelope_list` and `envelope_search` put the `mailbox` on every envelope,
+  and every tool that takes a UID requires `mailbox` explicitly, because the
+  same UID names a different message in another folder.
 - The recipient rule fails closed: if the original cannot be read, no draft is
   created. A rule that quietly stops applying when the mailbox is down is not a
   rule.
@@ -241,7 +244,7 @@ details:
 npm test
 ```
 
-77 cases. Two of them are skipped unless you point them at extras:
+86 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

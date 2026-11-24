@@ -344,8 +344,8 @@ test('A part id cannot become an option', async () => {
   // Part ids are positionals; '--dir=/x' there would move the download out of
   // the quarantine.
   for (const [name, args] of [
-    ['attachment_download', { id: '7', parts: ['--dir=/tmp/x'] }],
-    ['attachment_read', { id: '7', part: '-d/tmp/x' }],
+    ['attachment_download', { id: '7', mailbox: 'inbox', parts: ['--dir=/tmp/x'] }],
+    ['attachment_read', { id: '7', mailbox: 'inbox', part: '-d/tmp/x' }],
   ]) {
     const { answers, calls } = await callServer([tool(name, args)]);
     const a = answerTo(answers, 2);
@@ -373,7 +373,7 @@ test('attachment_read extracts PDF text and filters it page by page', async () =
     'Confirm with the TAN 553201 from your app. Hotline +49 30 555012-25.',
     'Signed in Heidelberg.'];
   const { answers, pdftotext } = await callServer(
-    [tool('attachment_read', { id: '7', part: '2', page: 2, pageCount: 2 })],
+    [tool('attachment_read', { id: '7', mailbox: 'inbox', part: '2', page: 2, pageCount: 2 })],
     { env: { ...attachment('contract.pdf', 'application/pdf', '%PDF-1.4'),
       MOCK_PDF_TEXT: pages.join('\f') + '\f' } });
   assert.equal(pdftotext.length, 1);
@@ -392,7 +392,7 @@ test('attachment_read extracts PDF text and filters it page by page', async () =
 test('attachment_read refuses images', async () => {
   // A 2FA setup mail carries its secret as a QR code; no text filter sees it.
   const { answers, pdftotext } = await callServer(
-    [tool('attachment_read', { id: '7', part: '2' })],
+    [tool('attachment_read', { id: '7', mailbox: 'inbox', part: '2' })],
     { env: attachment('qr.png', 'image/png', 'PNGDATA') });
   const a = answerTo(answers, 2).result;
   assert.ok(a.isError);
@@ -402,7 +402,7 @@ test('attachment_read refuses images', async () => {
 
 test('attachment_read ends softly when the mailbox is unreachable', async () => {
   const { answers } = await callServer(
-    [tool('attachment_read', { id: '7', part: '2' })], BRIDGE_DOWN);
+    [tool('attachment_read', { id: '7', mailbox: 'inbox', part: '2' })], BRIDGE_DOWN);
   const a = answerTo(answers, 2).result;
   assert.ok(!a.isError);
   assert.equal(JSON.parse(a.content[0].text).soft, true);
@@ -478,7 +478,7 @@ test('thread_read returns linked and same-subject messages in chronological orde
 });
 
 test('thread_read ends softly when the bridge is down', async () => {
-  const { answers } = await callServer([tool('thread_read', { id: '1' })],
+  const { answers } = await callServer([tool('thread_read', { id: '1', mailbox: 'All Mail' })],
     { code: 1, stdout: 'Error: connection refused (os error 111)' });
   const a = answerTo(answers, 2).result;
   assert.ok(!a.isError);
@@ -488,4 +488,41 @@ test('thread_read ends softly when the bridge is down', async () => {
 test('thread_read gives short messages their full length and splits the rest', () => {
   assert.deepEqual(shares([10, 500, 30, 900], 300), [10, 130, 30, 130]);
   assert.deepEqual(shares([5, 5], 300), [5, 5]);
+});
+
+test('Every tool that takes a UID insists on its folder', async () => {
+  for (const [name, args] of EVERY_TOOL) {
+    if (!('id' in args) || name === 'message_move') continue;
+    const { mailbox, ...rest } = args;
+    const { answers, calls } = await callServer([tool(name, rest)], { raw: TO_OWN });
+    const a = answerTo(answers, 2);
+    assert.ok(a.result?.isError || a.error, `${name} accepted a UID without a mailbox`);
+    assert.equal(calls.length, 0, `${name} must not reach himalaya`);
+  }
+});
+
+test('Envelope listings name their folder on every envelope', async () => {
+  const { answers } = await callServer([tool('envelope_list', {})],
+    { stdout: '{"envelopes":[{"id":"7","subject":"Hallo"}]}' });
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.mailbox, 'inbox');
+  assert.equal(data.envelopes[0].mailbox, 'inbox');
+});
+
+test('Query words in a subject never reach the query', async () => {
+  const { seen } = await callServer([tool('envelope_search', { query: 'subject "Tom and Jerry"' })],
+    { stdout: '{"envelopes":[]}' });
+  assert.equal(seen.argv.at(-1), '(subject Tom and subject Jerry)');
+});
+
+test('thread_read says so when the subject gives nothing to search for', async () => {
+  const routes = {
+    'message read 5 --mailbox inbox': 'Date: Mon, 12 Oct 2026 20:00:00 +0000\nSubject: AW: KI\n\nkurz',
+    'message read 5 --mailbox inbox --raw': 'Message-Id: <k@x>\n\nkurz',
+  };
+  const { answers } = await callServer([tool('thread_read', { id: '5', mailbox: 'inbox' })],
+    { env: { MOCK_ROUTES: JSON.stringify(routes) } });
+  const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
+  assert.equal(data.count, 1);
+  assert.equal(data.incomplete, true);
 });

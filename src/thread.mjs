@@ -13,9 +13,12 @@ export function baseSubject(subject = '') {
   return subject.replace(PREFIX, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+export const QUERY_WORDS = new Set(['and', 'or', 'not', 'order', 'by', 'asc', 'desc',
+  'date', 'after', 'before', 'flag', 'from', 'to', 'subject', 'body']);
+
 export function searchQuery(subject) {
   const words = [...new Set(baseSubject(subject).split(/[\s\p{P}\p{S}]+/u)
-    .filter((w) => w.length >= 3 && !/[^\x00-\x7f]/.test(w)))]
+    .filter((w) => w.length >= 3 && !/[^\x00-\x7f]/.test(w) && !QUERY_WORDS.has(w)))]
     .sort((a, b) => b.length - a.length)
     .slice(0, 3);
   return words.length ? words.map((w) => `subject ${w}`).join(' or ') : null;
@@ -64,7 +67,7 @@ export function members(seed, envelopes) {
       if (chosen.has(e.id)) continue;
       const links = e['in-reply-to'] ?? [];
       const linked = known.has(e['message-id']) || links.some((l) => known.has(l));
-      const sameTopic = base && baseSubject(e.subject) === base && near(e) && involves(e);
+      const sameTopic = seed.own && base && baseSubject(e.subject) === base && near(e) && involves(e);
       if (!linked && !sameTopic) continue;
       chosen.set(e.id, e);
       for (const l of [e['message-id'], ...links]) if (l) known.add(l);
@@ -94,13 +97,18 @@ export async function collectThread(himalaya, id, mailbox, { own = null, quotes 
     ? `(${words}) and after ${day(seed.time - SPAN_DAYS * DAY)}`
     : words;
   const envelopes = [];
-  let incomplete = false;
+  let incomplete = !query;
   for (let page = 1; query; page += 1) {
     if (page > MAX_PAGES) { incomplete = true; break; }
     const found = await himalaya(['envelope', 'search', '--mailbox', ALL_MAIL,
       '--page', String(page), '--page-size', String(PAGE_SIZE), '--json', query]);
     if (found.code !== 0) return { failed: found };
-    const batch = JSON.parse(found.out).envelopes ?? [];
+    let batch;
+    try {
+      batch = JSON.parse(found.out).envelopes ?? [];
+    } catch {
+      return { failed: { ...found, code: found.code || 1 } };
+    }
     envelopes.push(...batch);
     if (batch.length < PAGE_SIZE - 1) break;
   }

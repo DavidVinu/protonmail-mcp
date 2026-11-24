@@ -282,3 +282,28 @@ test('the sibling server masks exactly the same characters',
     // word the other does not use and the difference is invisible in review.
     assert.equal(other.MASK, MASK);
   });
+
+test('Text that announces a code strongly masks every code shape in it', () => {
+  assert.equal(redact('Your one-time password follows below. Please do not share it with anyone at all: 4417'),
+    'Your one-time password follows below. Please do not share it with anyone at all: [...]');
+  assert.equal(redact('Your code for the portal (valid 10 minutes, do not share) follows here: 123456789'),
+    'Your code for the portal (valid 10 minutes, do not share) follows here: [...]');
+  assert.equal(redact('Your verification code: kxmqpz'), 'Your verification code: [...]');
+  assert.equal(redact('Your confirmation code is below.'), 'Your confirmation code is below.');
+});
+
+test('A keyword behind heavy HTML markup still counts as near', () => {
+  const pad = '<td style="font-family:Helvetica,Arial;padding:12px 24px;color:#333">'.repeat(8);
+  assert.ok(!redact(`<td>Your verification code</td>${pad}<strong>482913</strong>`).includes('482913'));
+});
+
+test('An encoded subject is decoded before the 2FA check', () => {
+  const mail = 'From: Bank <noreply@bank.de>\nSubject: =?UTF-8?Q?Ihr_Best=C3=A4tigungscode?=\n\n'
+    + 'Bitte geben Sie folgende Zahl ein, um fortzufahren, danke sehr: 4471';
+  assert.ok(!redact(mail).includes('4471'));
+});
+
+test('A German landline stays readable next to a booking code', () => {
+  const t = 'Buchungscode schicke ich dir. Telefon: 030 555012-57, Raum 4711';
+  assert.equal(redact(t), t);
+});

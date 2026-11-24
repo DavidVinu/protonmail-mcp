@@ -36,7 +36,7 @@ export function htmlToText(html, { quotes = true } = {}) {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(?:p|div|tr|li|h[1-6]|table|blockquote)>/gi, '\n')
     .replace(/<li\b[^>]*>/gi, '- ')
-    .replace(/<[^>]*>/g, ''))
+    .replace(/<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?\/?>/gi, ''))
     .replace(/[^\S\n]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -57,7 +57,7 @@ export function readable(text, { quotes = false } = {}) {
   const head = blank >= 0 ? text.slice(0, blank) : text;
   let body = blank >= 0 ? text.slice(blank).replace(/^\r?\n\r?\n/, '') : '';
   body = body.replace(/<html\b[\s\S]*?(?:<\/html>|$)/gi, (html) => `\n${htmlToText(html, { quotes })}\n`);
-  if (!/<html\b/i.test(text) && /<(?:div|p|table|br)\b[^>]*>/i.test(body)) {
+  if (!/<html\b/i.test(text) && /^\[\d+\] text\/html\b/m.test(body)) {
     body = htmlToText(body, { quotes });
   }
   if (!quotes) body = stripQuotes(body);

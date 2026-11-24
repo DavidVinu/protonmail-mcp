@@ -41,3 +41,9 @@ test('A plain-text mail without quotes comes back unchanged', () => {
   const mail = `${HEAD}\n\nHallo,\nTel.: +49 30 555012-25`;
   assert.equal(readable(mail), mail);
 });
+
+test('Plain text with angle-bracket addresses is not treated as HTML', () => {
+  const mail = `${HEAD}\n\n[1] text/plain\n\nContact: Alice <alice@x.org>, see <https://example.org/doc><br>`;
+  assert.ok(readable(mail).includes('<alice@x.org>'));
+  assert.ok(readable(mail).includes('<https://example.org/doc>'));
+});

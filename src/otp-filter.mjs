@@ -58,6 +58,7 @@ const PROTECTED = [
   /\b\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}\b/g,              // 22.09.2026
   /\b(?:19|20)\d{2}-\d{2}\b/g,                          // 2026-09
   /\+\d{1,3}(?:[ \/-]?\(?\d+\)?)+/g,
+  /(?<![\d.,])0\d{2,5}[ \/]\d{4,8}(?:-\d{1,5})?(?!\d|[.,]\d)/g,
 ];
 
 /** Does a protected span cover the candidate completely? */
@@ -103,7 +104,6 @@ export function maskCodes(text, near = () => true) {
   return parts.join('');
 }
 
-// --- Context -----------------------------------------------------------------
 export const WINDOW = 40;
 
 const L = 'a-zäöüß';
@@ -117,16 +117,31 @@ const KEYWORDS = [
 ];
 const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`, 'iu');
 
+const STRONG_TERMS = [
+  'otp', 'tan', '2fa', 'mfa', 'passcode',
+  String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
+  String.raw`(?:one|einmal)[-\s]?(?:time|code|kennwort|passwort)[${L}]*`,
+  String.raw`(?:verification|security|confirmation|login|log[-\s]?in|sign[-\s]?in|authentication|access|sms)[-\s]code`,
+  String.raw`(?:verifizierungs|bestätigungs|bestaetigungs|sicherheits|anmelde|zugangs|freigabe|login|einmal|authentifizierungs)[-\s]?code`,
+  String.raw`(?:your|ihr|dein)[^\S\n]+(?:[${L}]+[^\S\n]+)?code`,
+];
+const STRONG = `(?<![${L}0-9])(?:${STRONG_TERMS.join('|')})s?(?![${L}])`;
+const ANNOUNCES = new RegExp(STRONG, 'iu');
+
 const SUBJECT_ONLY = new RegExp(`(?<![${L}])(?:sign[-\\s]?in|log[-\\s]?in|anmeld[${L}]*|security|sicherheit[${L}]*|confirm[${L}]*|bestätig[${L}]*)`, 'iu');
 
 const SENDER_TOKENS = new Set(['verify', 'verification', 'security', 'otp', '2fa',
   'mfa', 'auth', 'login', 'signin', 'accountprotection', 'passcode']);
 
+const LABEL_TAIL = String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*:?|:)[^\S\n]*`;
 const LABELLED = new RegExp(
   `(?<![${L}])(?:${CODE_WORD}|tan|pin|otp|passcode|token|passwor[dt]|kennwort)`
-  + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*:?|:)[^\S\n]*([A-Z0-9](?:-?[A-Z0-9]){3,11})${END}`,
+  + LABEL_TAIL + String.raw`([A-Z0-9](?:-?[A-Z0-9]){3,11})${END}`,
   'giu',
 );
+const STRONG_LABELLED = new RegExp(
+  STRONG + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*)?:[^\S\n]*([a-z0-9](?:-?[a-z0-9]){3,11})${END}`, 'giu');
+const LONG_NUMBER = new RegExp(`${START}(\\d{9,10})${END}`, 'g');
 
 export function hasContext(text) {
   return typeof text === 'string' && CONTEXT.test(text);
@@ -138,29 +153,64 @@ export function isTwoFactorMail({ subject = '', from = '' } = {}) {
   return local.split(/[-._+]/).some((t) => SENDER_TOKENS.has(t));
 }
 
+function decodeWords(value) {
+  return value.replace(/\?=\s+=\?/g, '?==?').replace(/=\?([^?]+)\?([bq])\?([^?]*)\?=/gi, (whole, charset, enc, data) => {
+    try {
+      const bytes = enc.toLowerCase() === 'b'
+        ? Buffer.from(data, 'base64')
+        : Buffer.from(data.replace(/_/g, ' ').replace(/=([0-9a-f]{2})/gi,
+          (_, h) => String.fromCharCode(parseInt(h, 16))), 'latin1');
+      return new TextDecoder(charset.toLowerCase()).decode(bytes);
+    } catch {
+      return whole;
+    }
+  });
+}
+
 export function headersOf(text) {
-  const head = text.split(/\r?\n\r?\n/, 1)[0];
-  const field = (name) => new RegExp(`^${name}:[^\\S\\n]*(.*)$`, 'mi').exec(head)?.[1] ?? '';
+  const head = text.split(/\r?\n\r?\n/, 1)[0].replace(/\r?\n[ \t]+/g, ' ');
+  const field = (name) => decodeWords(new RegExp(`^${name}:[^\\S\\n]*(.*)$`, 'mi').exec(head)?.[1] ?? '');
   return { subject: field('Subject'), from: field('From') };
 }
 
-const visible = (html) => html.replace(/<[^<>]*>/g, ' ').replace(/[^\S\n]+/g, ' ');
+const visible = (html) => html.replace(/^[^<]*>/, ' ').replace(/<[^>]*$/, ' ')
+  .replace(/<[^<>]*>/g, ' ').replace(/[^\S\n]+/g, ' ');
+
+function visibleBefore(text, start) {
+  for (let n = 10 * WINDOW; ; n *= 2) {
+    const seen = visible(text.slice(Math.max(0, start - n), start));
+    if (seen.length >= WINDOW || n >= start) return seen.slice(-WINDOW);
+  }
+}
+
+function visibleAfter(text, end) {
+  for (let n = 10 * WINDOW; ; n *= 2) {
+    const seen = visible(text.slice(end, end + n));
+    if (seen.length >= WINDOW || end + n >= text.length) return seen.slice(0, WINDOW);
+  }
+}
 
 function maskLabelled(text) {
-  return text.replace(LABELLED, (hit, code) => {
+  const masked = text.replace(LABELLED, (hit, code) => {
     if (code.includes(MASK)) return hit;
     if (!/\d/.test(code) && code !== code.toUpperCase()) return hit;
     return hit.slice(0, hit.length - code.length) + MASK;
   });
+  return masked.replace(STRONG_LABELLED, (hit, code) => (
+    code.includes(MASK) ? hit : hit.slice(0, hit.length - code.length) + MASK));
+}
+
+function maskAll(text) {
+  const masked = maskCodes(text);
+  return maskLabelled(masked.replace(LONG_NUMBER, (hit, digits, offset) => (
+    insideProtectedSpan(masked, offset, offset + hit.length) ? hit : hit.replace(digits, MASK))));
 }
 
 export function redact(text, { twoFactor = false } = {}) {
   if (typeof text !== 'string' || !text) return text;
-  if (twoFactor || isTwoFactorMail(headersOf(text))) return maskLabelled(maskCodes(text));
+  if (twoFactor || ANNOUNCES.test(text) || isTwoFactorMail(headersOf(text))) return maskAll(text);
   const near = (start, end) => hasContext(
-    visible(text.slice(Math.max(0, start - 10 * WINDOW), start)).slice(-WINDOW)
-    + text.slice(start, end)
-    + visible(text.slice(end, end + 10 * WINDOW)).slice(0, WINDOW));
+    visibleBefore(text, start) + text.slice(start, end) + visibleAfter(text, end));
   return maskLabelled(maskCodes(text, near));
 }
 
