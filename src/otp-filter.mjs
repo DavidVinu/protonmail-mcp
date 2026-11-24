@@ -86,10 +86,15 @@ function phoneSpans(text) {
   return spans;
 }
 
-const US_ZIP = /\b((?:[A-Z][a-z]+[ \u00a0]){0,2}[A-Z][a-z]+),[ \u00a0](?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR|VI|GU|AS|MP|AA|AE|AP)[ \u00a0](\d{5}(?:-\d{4})?)\b/g;
+const CITY = String.raw`(?:[A-Z][A-Za-z'’]*[a-z][A-Za-z'’]*|[A-Z]{3,})`;
+const US_ZIP = new RegExp(String.raw`(?<![A-Za-z])((?:${CITY}[ \u00a0]){0,2}${CITY}),?[ \u00a0](?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR|VI|GU|AS|MP|AA|AE|AP)[ \u00a0](\d{5}(?:-\d{4})?)\b`, 'g');
+const NOT_A_CITY = /^(?:log|sign|code|pin|tan|otp|token|pass)/i;
 
 function zipSpans(text) {
-  return [...text.matchAll(US_ZIP)].filter((m) => !hasContext(m[1]) && !ANNOUNCES.test(m[1]))
+  return [...text.matchAll(US_ZIP)].filter((m) => {
+    const line = text.slice(text.lastIndexOf('\n', m.index) + 1, m.index) + m[1];
+    return !hasContext(line) && !ANNOUNCES.test(line) && !m[1].split(/[ \u00a0]/).some((w) => NOT_A_CITY.test(w));
+  })
     .map((m) => [m.index + m[0].length - m[2].length, m.index + m[0].length]);
 }
 
@@ -361,7 +366,16 @@ function maskAll(text, strong) {
   return masked;
 }
 
-export function redact(text, { twoFactor = false } = {}) {
+export function redact(text, options) {
+  try {
+    return redactText(text, options);
+  } finally {
+    cachedText = null;
+    cachedSpans = [];
+  }
+}
+
+function redactText(text, { twoFactor = false } = {}) {
   if (typeof text !== 'string' || !text) return text;
   const strong = ANNOUNCES.test(text);
   if (strong || twoFactor || isTwoFactorMail(headersOf(text))) return maskAll(text, strong);

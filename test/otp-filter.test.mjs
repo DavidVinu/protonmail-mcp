@@ -432,7 +432,9 @@ test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note'
 
 test('Round eight: a US address stays readable, a code after two capitals does not', () => {
   assert.ok(redact('Your verification code: 482913\nShip to Austin, TX 78701').endsWith('Austin, TX 78701'));
-  assert.ok(redact('Your verification code: 482913\nShip to San Juan, PR 00901').endsWith('San Juan, PR 00901'));
+  for (const a of ['San Juan, PR 00901', 'Austin TX 78701', 'AUSTIN, TX 78701', 'McAllen, TX 78501']) {
+    assert.ok(redact(`Your verification code: 482913\nShip to ${a}`).endsWith(a), a);
+  }
   for (const t of ['Your Verification Code GB 48291', 'Your Code XY 48291', 'Ihr Code DE 48291', 'Your Code CA 48291']) {
     assert.ok(!redact(t).includes('48291'), t);
   }
@@ -449,7 +451,7 @@ test('Round nine: boxes after validity notes and after an inline copy are masked
 
 test('Round ten: a code after a state abbreviation is masked', () => {
   for (const t of ['Your Passcode CA 48291', 'Dein Sicherheitscode DE 48291', 'Your Token NY 48291',
-    'Your code, CA 48291', 'Your Code, CA 48291', 'Ship to Austin TX 48291 is your code']) {
+    'Your code, CA 48291', 'Your Code, CA 48291', 'Your Verification Code For Acme Corp, CA 48291']) {
     assert.ok(!redact(t).includes('48291'), t);
   }
 });
