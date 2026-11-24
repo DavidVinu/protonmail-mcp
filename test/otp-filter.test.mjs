@@ -463,3 +463,9 @@ test('Accepted trade-off: in a mail that announces a code, nearby digit boxes ar
 test('Accepted trade-off: a US zip code in a mail that announces a code is masked', () => {
   assert.ok(redact('Your verification code: 482913\nShip to Austin, TX 78701').endsWith('TX [...]'));
 });
+
+test('Accepted trade-off: US zip codes anywhere in a 2FA mail are masked', () => {
+  assert.ok(redact('Your verification code: 482913\n\nAcme Inc, 548 Market St, San Francisco, CA 94104').endsWith('CA [...]'));
+  assert.ok(redact('Subject: Sign in to Acme\nFrom: noreply@acme.com\n\nOur office: San Francisco, CA 94104').endsWith('CA [...]'));
+  assert.equal(redact('Ship to Austin, TX 78701', { twoFactor: true }), 'Ship to Austin, TX [...]');
+});

@@ -207,13 +207,13 @@ details:
   characters or when the message itself is a 2FA mail (keyword in the subject or a sender like `verify@` or `2fa@`).
   Text that announces a code strongly (OTP, TAN, one-time password, "your
   code", verification code, Bestätigungscode and the like) is treated as a 2FA
-  mail as a whole. Only the code is replaced by `[...]`; phone numbers, dates, IBANs, postcodes
-  and amounts are never masked. A code with no keyword nearby in a mail without
+  mail as a whole. Only the code is replaced by `[...]`; dates, IBANs, German postcodes,
+  amounts and phone numbers with a `+` prefix or a Tel label are never masked. A code with no keyword nearby in a mail without
   a 2FA subject or sender gets through; that is the price of readable mail.
-  In a mail that announces a code the filter errs towards masking: single-digit
-  tables, spaced characters, unlabelled phone numbers and US ZIP codes near the
-  code can come back as `[...]`. Earlier attempts to keep them readable each let
-  some code through.
+  In a 2FA mail (announced code, 2FA subject or sender) the filter errs towards
+  masking: single-digit tables and spaced characters near the code, and
+  unlabelled phone numbers and US ZIP codes anywhere in the mail, can come back
+  as `[...]`. Earlier attempts to keep them readable each let some code through.
 - `envelope_search` passes the query to himalaya. Each condition takes one
   word. Quoted phrases do not work in himalaya against Proton Bridge, so the
   server splits `subject "a b"` into `(subject a and subject b)`. Bridge matches
@@ -249,7 +249,7 @@ details:
 npm test
 ```
 
-110 cases. Two of them are skipped unless you point them at extras:
+111 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character
