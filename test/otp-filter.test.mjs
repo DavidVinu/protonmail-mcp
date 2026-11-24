@@ -415,8 +415,9 @@ test('Round six: boxes further down, footers, status words and stray digits', ()
   assert.equal(redact(footer), footer);
 });
 
-test('A US address and a regulator authorisation code stay readable', () => {
-  for (const t of ['548 Market St, San Francisco, CA 94104', 'registration number of 304580906 and authorisation code of 900562']) {
+test('A US address and a regulator authorisation code stay readable in ordinary mail', () => {
+  for (const t of ['548 Market St, San Francisco, CA 94104', 'registration number of 304580906 and authorisation code of 900562',
+    'Delivery to Acme Inc, Austin, TX 78701']) {
     assert.equal(redact(t), t, t);
   }
 });
@@ -430,11 +431,7 @@ test('Round seven: lowercase boxes, plural nouns, two boxes and a validity note'
   }
 });
 
-test('Round eight: a US address stays readable, a code after two capitals does not', () => {
-  assert.ok(redact('Your verification code: 482913\nShip to Austin, TX 78701').endsWith('Austin, TX 78701'));
-  for (const a of ['San Juan, PR 00901', 'Austin TX 78701', 'AUSTIN, TX 78701', 'McAllen, TX 78501']) {
-    assert.ok(redact(`Your verification code: 482913\nShip to ${a}`).endsWith(a), a);
-  }
+test('A code after two capitals and a country code is masked', () => {
   for (const t of ['Your Verification Code GB 48291', 'Your Code XY 48291', 'Ihr Code DE 48291', 'Your Code CA 48291']) {
     assert.ok(!redact(t).includes('48291'), t);
   }
@@ -451,7 +448,9 @@ test('Round nine: boxes after validity notes and after an inline copy are masked
 
 test('Round ten: a code after a state abbreviation is masked', () => {
   for (const t of ['Your Passcode CA 48291', 'Dein Sicherheitscode DE 48291', 'Your Token NY 48291',
-    'Your code, CA 48291', 'Your Code, CA 48291', 'Your Verification Code For Acme Corp, CA 48291']) {
+    'Your code, CA 48291', 'Your Code, CA 48291', 'Your Verification Code For Acme Corp, CA 48291',
+    'Your Microsoft verification code:\nAcme Corp ID 48291', 'Your security code:\nACME, CA 48291',
+    'Ihr Bestätigungscode\nAcme Bank DE 48291', 'Ship to Austin TX 48291 is your code']) {
     assert.ok(!redact(t).includes('48291'), t);
   }
 });
@@ -459,4 +458,8 @@ test('Round ten: a code after a state abbreviation is masked', () => {
 test('Accepted trade-off: in a mail that announces a code, nearby digit boxes are masked too', () => {
   assert.ok(!redact('Your code 482913.\nItems: <td>2</td><td>5</td><td>1</td><td>9</td>').includes('<td>2</td>'));
   assert.ok(redact('Your verification code is below. Step a 1 b 2').endsWith('Step [...]'));
+});
+
+test('Accepted trade-off: a US zip code in a mail that announces a code is masked', () => {
+  assert.ok(redact('Your verification code: 482913\nShip to Austin, TX 78701').endsWith('TX [...]'));
 });

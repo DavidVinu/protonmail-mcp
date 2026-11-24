@@ -86,24 +86,12 @@ function phoneSpans(text) {
   return spans;
 }
 
-const CITY = String.raw`(?:[A-Z][A-Za-z'’]*[a-z][A-Za-z'’]*|[A-Z]{3,})`;
-const US_ZIP = new RegExp(String.raw`(?<![A-Za-z])((?:${CITY}[ \u00a0]){0,2}${CITY}),?[ \u00a0](?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC|PR|VI|GU|AS|MP|AA|AE|AP)[ \u00a0](\d{5}(?:-\d{4})?)\b`, 'g');
-const NOT_A_CITY = /^(?:log|sign|code|pin|tan|otp|token|pass)/i;
-
-function zipSpans(text) {
-  return [...text.matchAll(US_ZIP)].filter((m) => {
-    const line = text.slice(text.lastIndexOf('\n', m.index) + 1, m.index) + m[1];
-    return !hasContext(line) && !ANNOUNCES.test(line) && !m[1].split(/[ \u00a0]/).some((w) => NOT_A_CITY.test(w));
-  })
-    .map((m) => [m.index + m[0].length - m[2].length, m.index + m[0].length]);
-}
-
 let cachedText = null;
 let cachedSpans = [];
 
 function protectedSpans(text) {
   if (text === cachedText) return cachedSpans;
-  const spans = [...phoneSpans(text), ...zipSpans(text)];
+  const spans = phoneSpans(text);
   for (const pattern of PROTECTED) {
     for (const hit of text.matchAll(pattern)) spans.push([hit.index, hit.index + hit[0].length]);
   }
