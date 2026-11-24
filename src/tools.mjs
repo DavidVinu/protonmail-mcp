@@ -257,9 +257,20 @@ export function shares(lengths, total) {
   return out;
 }
 
+function withMailbox(result, mailbox) {
+  if (result.isError) return result;
+  try {
+    const data = JSON.parse(result.content[0].text);
+    if (!Array.isArray(data.envelopes)) return result;
+    return { content: [{ type: 'text', text: JSON.stringify({ mailbox, ...data }) }] };
+  } catch {
+    return result;
+  }
+}
+
 export function splitPhrases(query) {
   return query.replace(/\b(from|to|subject|body)\s+"([^"]*)"/gi, (whole, field, phrase) => {
-    const words = phrase.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+    const words = phrase.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
     const ascii = words.filter((w) => !/[^\x00-\x7f]/.test(w));
     const used = ascii.length ? ascii : words;
     if (!used.length) return whole;
@@ -300,8 +311,9 @@ export function register(server, config = resolveConfig()) {
 
   server.registerTool('envelope_search', {
     description: 'Search envelopes. Defaults to "All Mail", so archived and sent '
-      + 'mail is found too; the returned ids are UIDs of the searched folder, so '
-      + 'pass the same mailbox to message_read. Query syntax (himalaya): '
+      + 'mail is found too. The answer names its mailbox: the ids are UIDs of that '
+      + 'folder only, so pass the same mailbox to message_read, message_reply, '
+      + 'flag_add and the attachment tools, whose default is inbox. Query syntax (himalaya): '
       + 'conditions from <text>, to <text>, subject <text>, body <text>, '
       + 'date <yyyy-mm-dd>, after <yyyy-mm-dd>, flag <seen|answered|flagged|draft>; '
       + 'combine with and, or, not and parentheses; sort with order by '
@@ -320,36 +332,47 @@ export function register(server, config = resolveConfig()) {
       query: z.string().min(1),
       pageSize: z.number().int().min(1).max(100).default(20),
     },
-  }, async ({ mailbox, query, pageSize }) => call(config,
-    ['envelope', 'search', '--mailbox', mailbox, '--page-size', String(pageSize),
-      '--has-attachment', '--json', splitPhrases(query)], { soft: true },
-  ));
+  }, async ({ mailbox, query, pageSize }) => {
+    const result = await call(config,
+      ['envelope', 'search', '--mailbox', mailbox, '--page-size', String(pageSize),
+        '--has-attachment', '--json', splitPhrases(query)], { soft: true });
+    return withMailbox(result, mailbox);
+  });
 
   server.registerTool('thread_read', {
     description: 'Read a whole conversation in chronological order: every '
       + 'message linked to the given one by In-Reply-To or References, or '
-      + 'carrying the same subject without Re:/AW:/Fwd:/WG: prefixes. Searches '
+      + 'carrying the same subject without Re:/AW:/Fwd:/WG: prefixes, a shared '
+      + 'participant and a date within 180 days. Candidates come from a subject '
+      + 'search, so a reply under a completely new subject is not found. Searches '
       + `"All Mail"; the ids in the answer are All Mail UIDs. At most ${MAX_MESSAGES} `
-      + 'messages, the most recent ones; omitted counts the rest.',
+      + 'messages, the most recent ones; omitted counts the rest, and incomplete: '
+      + 'true means the search hit its page limit and older messages may be missing.',
     inputSchema: {
       id: z.string().min(1).describe('IMAP UID of any message in the thread'),
       mailbox: z.string().default(ALL_MAIL).describe('folder the id belongs to'),
     },
   }, async ({ id, mailbox }) => {
-    const thread = await collectThread((argv) => run(config, argv), id, mailbox);
+    const own = await ownAddress(config).catch(() => null);
+    const thread = await collectThread((argv) => run(config, argv), id, mailbox, own);
     if (thread.failed) {
       const { code, out, err } = thread.failed;
       return failure(code, out, err, true);
     }
-    const budget = shares(thread.messages.map((m) => m.text.length), MAX_TEXT);
-    const messages = thread.messages.map((m, i) => ({
+    const clean = thread.messages.map((m) => scrub(m));
+    const budget = shares(clean.map((m) => m.text.length), MAX_TEXT);
+    const messages = clean.map((m, i) => ({
       ...m,
       text: m.text.slice(0, budget[i]),
       truncated: m.text.length > budget[i],
     }));
-    return { content: [{ type: 'text', text: JSON.stringify(scrub({
-      mailbox: thread.mailbox, count: messages.length, omitted: thread.omitted, messages,
-    })) }] };
+    return { content: [{ type: 'text', text: JSON.stringify({
+      mailbox: thread.mailbox,
+      count: messages.length,
+      omitted: thread.omitted,
+      incomplete: thread.incomplete,
+      messages,
+    }) }] };
   });
 
   server.registerTool('message_read', {

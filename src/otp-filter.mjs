@@ -107,7 +107,8 @@ export function maskCodes(text, near = () => true) {
 export const WINDOW = 40;
 
 const L = 'a-zäöüß';
-const CODE_WORD = String.raw`(?!(?:bar|qr|quell|uni|dress|post|zip|l[äa]nder|farb|morse|geo|source|country|area|colou?r)code)[${L}]*code`;
+const ORDINARY = String.raw`bar|qr|quell|uni|dress|post|postal|zip|l[äa]nder|farb|morse|geo|source|country|area|colou?r`;
+const CODE_WORD = String.raw`(?<!(?:${ORDINARY})[-\s])(?!(?:${ORDINARY})code)[${L}]*code`;
 const KEYWORDS = [
   'tan', 'otp', 'pin', '2fa', 'mfa', 'token', 'passcode', 'passwor[dt]', 'kennwort',
   String.raw`(?:two|2|zwei)[-\s]?(?:factor|faktor)`,
@@ -116,12 +117,14 @@ const KEYWORDS = [
 ];
 const CONTEXT = new RegExp(`(?<![${L}0-9])(?:${KEYWORDS.join('|')})s?(?![${L}])`, 'iu');
 
+const SUBJECT_ONLY = new RegExp(`(?<![${L}])(?:sign[-\\s]?in|log[-\\s]?in|anmeld[${L}]*|security|sicherheit[${L}]*|confirm[${L}]*|bestätig[${L}]*)`, 'iu');
+
 const SENDER_TOKENS = new Set(['verify', 'verification', 'security', 'otp', '2fa',
   'mfa', 'auth', 'login', 'signin', 'accountprotection', 'passcode']);
 
 const LABELLED = new RegExp(
   `(?<![${L}])(?:${CODE_WORD}|tan|pin|otp|passcode|token|passwor[dt]|kennwort)`
-  + String.raw`[^\S\n]*(?:is|ist|lautet)?[^\S\n]*:[^\S\n]*([A-Z0-9](?:-?[A-Z0-9]){3,11})${END}`,
+  + String.raw`[^\S\n]*(?:(?:is|ist|lautet)[^\S\n]*:?|:)[^\S\n]*([A-Z0-9](?:-?[A-Z0-9]){3,11})${END}`,
   'giu',
 );
 
@@ -130,7 +133,7 @@ export function hasContext(text) {
 }
 
 export function isTwoFactorMail({ subject = '', from = '' } = {}) {
-  if (hasContext(subject)) return true;
+  if (hasContext(subject) || SUBJECT_ONLY.test(subject)) return true;
   const local = String(from).match(/([^\s<"@]+)@/)?.[1]?.toLowerCase() ?? '';
   return local.split(/[-._+]/).some((t) => SENDER_TOKENS.has(t));
 }
@@ -141,8 +144,11 @@ export function headersOf(text) {
   return { subject: field('Subject'), from: field('From') };
 }
 
+const visible = (html) => html.replace(/<[^<>]*>/g, ' ').replace(/[^\S\n]+/g, ' ');
+
 function maskLabelled(text) {
   return text.replace(LABELLED, (hit, code) => {
+    if (code.includes(MASK)) return hit;
     if (!/\d/.test(code) && code !== code.toUpperCase()) return hit;
     return hit.slice(0, hit.length - code.length) + MASK;
   });
@@ -152,7 +158,9 @@ export function redact(text, { twoFactor = false } = {}) {
   if (typeof text !== 'string' || !text) return text;
   if (twoFactor || isTwoFactorMail(headersOf(text))) return maskLabelled(maskCodes(text));
   const near = (start, end) => hasContext(
-    text.slice(Math.max(0, start - WINDOW), end + WINDOW));
+    visible(text.slice(Math.max(0, start - 10 * WINDOW), start)).slice(-WINDOW)
+    + text.slice(start, end)
+    + visible(text.slice(end, end + 10 * WINDOW)).slice(0, WINDOW));
   return maskLabelled(maskCodes(text, near));
 }
 

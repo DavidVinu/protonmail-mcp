@@ -411,9 +411,11 @@ test('attachment_read ends softly when the mailbox is unreachable', async () => 
 // ------------------------------------------------------------ search, thread --
 
 test('envelope_search searches All Mail by default and splits quoted phrases', async () => {
-  const { seen } = await callServer([tool('envelope_search',
-    { query: 'subject "AG Vernetzung & KI" and body "nächste Sitzung"' })],
+  const { seen, answers } = await callServer([tool('envelope_search',
+    { query: 'subject "AG Vernetzung (KI)" and body "nächste Sitzung"' })],
   { stdout: '{"envelopes":[]}' });
+  assert.deepEqual(JSON.parse(answerTo(answers, 2).result.content[0].text),
+    { mailbox: 'All Mail', envelopes: [] }, 'the answer names the folder its ids belong to');
   assert.deepEqual(seen.argv, ['envelope', 'search', '--mailbox', 'All Mail',
     '--page-size', '20', '--has-attachment', '--json',
     '(subject AG and subject Vernetzung and subject KI) and body Sitzung']);
@@ -436,24 +438,28 @@ const envelope = (id, mid, irt, subject, date, email = 'hb@example.org') => ({
 
 test('thread_read returns linked and same-subject messages in chronological order', async () => {
   const subject = 'AG Vernetzung & KI – Infos und nächste Sitzung';
+  const hb = 'hb@example.org';
   const search = JSON.stringify({ envelopes: [
-    envelope('30', 'c@x', ['b@x'], `AW: ${subject}`, '2026-10-13T09:00:00Z'),
+    envelope('30', 'c@x', ['b@x'], `AW: ${subject}`, '2026-10-13T09:00:00+02:00'),
     envelope('99', 'z@x', [], 'AG Vernetzung Protokoll', '2026-10-12T09:30:00Z'),
     envelope('20', 'b@x', [], `Re: ${subject}`, '2026-10-12T20:00:00Z', OWN_ADDRESS),
-    envelope('10', 'a@x', [], subject, '2026-10-12T08:00:00Z'),
-    envelope('40', 'd@x', ['c@x'], 'Antwort mit neuem Betreff', '2026-11-02T13:00:00Z'),
+    envelope('10', 'a@x', [], subject, '2026-10-12T22:00:00+12:00', hb),
+    envelope('40', 'd@x', ['c@x'], 'Infos zum Protokoll', '2026-11-02T13:00:00Z', OWN_ADDRESS),
+    envelope('50', 'e@x', [], subject, '2026-10-20T08:00:00Z', 'stranger@example.net'),
+    envelope('60', 'f@x', [], `AW: ${subject}`, '2025-12-01T08:00:00Z', hb),
   ] });
   const signature = 'Tel.: +49 30 555012-25, Sitzung am 10.10.2026';
   const read = (id, text) => [`message read ${id} --mailbox All Mail`, text];
   const routes = Object.fromEntries([
-    ['message read 20 --mailbox inbox', `Subject: Re: ${subject}\n\nhi`],
+    ['message read 20 --mailbox inbox',
+      `Date: Mon, 12 Oct 2026 20:00:00 +0000\nFrom: <${OWN_ADDRESS}>\nTo: <${hb}>\nSubject: Re: ${subject}\n\nhi`],
     ['message read 20 --mailbox inbox --raw',
       'Message-Id: <b@x>\nReferences: <internal@proton>\nSubject: =?utf-8?q?x?=\n\nhi'],
     ['envelope search --mailbox All Mail --page 1 --page-size 100 --json '
-      + 'subject vernetzung or subject sitzung or subject infos', search],
+      + '(subject vernetzung or subject sitzung or subject infos) and after 2026-04-15', search],
     read('10', `Subject: ${subject}\n\nStart. ${signature}`),
     read('20', 'Zusage'),
-    read('30', 'Your login code: 416107'),
+    read('30', { text: 'Your login code: 416107', pad: 200000 }),
     read('40', 'Antwort'),
   ]);
   const { answers, calls } = await callServer(
@@ -461,10 +467,13 @@ test('thread_read returns linked and same-subject messages in chronological orde
     { env: { MOCK_ROUTES: JSON.stringify(routes) } });
   const data = JSON.parse(answerTo(answers, 2).result.content[0].text);
   assert.equal(data.mailbox, 'All Mail');
-  assert.deepEqual(data.messages.map((m) => m.id), ['10', '20', '30', '40']);
+  assert.deepEqual(data.messages.map((m) => m.id), ['10', '20', '30', '40'],
+    'sorted by instant, not by date string; strangers and old namesakes left out');
   assert.ok(data.messages[0].text.includes(signature), 'the signature stays readable');
-  assert.equal(data.messages[2].text, 'Your login code: [...]');
+  assert.ok(data.messages[2].text.startsWith('Your login code: [...]'), 'filtered before truncation');
+  assert.equal(data.messages[2].truncated, true);
   assert.equal(data.omitted, 0);
+  assert.equal(data.incomplete, false);
   assert.ok(calls.every((c) => !c.argv.includes('--seen')), 'reading leaves seen alone');
 });
 

@@ -213,10 +213,14 @@ details:
   server splits `subject "a b"` into `(subject a and subject b)`. Bridge matches
   the encoded raw text, so words with umlauts, and words that straddle an
   encoded-word boundary in a long subject, are often not found.
-- `thread_read` finds the conversation by subject search in `All Mail` and then
-  keeps messages linked by `In-Reply-To`/`References` or carrying the same
-  subject without `Re:`/`AW:`/`Fwd:`/`WG:` prefixes. A reply under a new subject
-  is found only through its link.
+- `thread_read` searches `All Mail` for up to three words of the subject
+  within 180 days before the given message, then keeps messages linked by
+  `In-Reply-To`/`References`, or with the same subject without
+  `Re:`/`AW:`/`Fwd:`/`WG:` prefixes, a shared participant and a date within 180
+  days. A reply under a subject that shares none of those words is not found.
+  `incomplete: true` means the search hit its page limit.
+- `envelope_search` answers with the `mailbox` it searched. Its ids are UIDs
+  of that folder; the other tools default to `inbox`, so pass the mailbox on.
 - The recipient rule fails closed: if the original cannot be read, no draft is
   created. A rule that quietly stops applying when the mailbox is down is not a
   rule.
@@ -234,7 +238,7 @@ details:
 npm test
 ```
 
-71 cases. Two of them are skipped unless you point them at extras:
+72 cases. Two of them are skipped unless you point them at extras:
 
 ```sh
 # compares the port against the Python original it came from, character for character

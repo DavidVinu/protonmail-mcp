@@ -25,9 +25,10 @@ fs.appendFileSync(process.env.MOCK_LOG,
   JSON.stringify({ argv, env: process.env }) + '\\n');
 const routes = JSON.parse(process.env.MOCK_ROUTES ?? '{}');
 if (argv.join(' ') in routes) {
-  process.stdout.write(routes[argv.join(' ')]);
-  process.exit(0);
-}
+  const route = routes[argv.join(' ')];
+  process.stdout.write(typeof route === 'string' ? route : route.text + ' x'.repeat(route.pad),
+    () => process.exit(0));
+} else {
 // The recipient check reads the original with 'read --raw'; that call gets its
 // own output and its own exit code, so a test can make the check fail without
 // making every other call fail too.
@@ -48,6 +49,7 @@ if (argv.includes('download') && process.env.MOCK_ATTACHMENT) {
 process.stdout.write(process.env.MOCK_STDOUT ?? '');
 process.stderr.write(process.env.MOCK_STDERR ?? '');
 process.exit(Number(process.env.MOCK_CODE ?? '0'));
+}
 `;
 
 // pdftotext stand-in: logs its argv like the himalaya mock, prints MOCK_PDF_TEXT.

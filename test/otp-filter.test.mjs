@@ -89,6 +89,11 @@ test('redact masks a code only next to a keyword', () => {
     ['Ihre TAN 553201', 'Ihre TAN [...]'],
     ['Your one-time password 291337', 'Your one-time password [...]'],
     ['Security code: KXJQMP', 'Security code: [...]'],
+    ['Your verification code is 123456789', 'Your verification code is [...]'],
+    ['Your confirmation code is below.<div style="font-size:28px;letter-spacing:4px;'
+      + 'font-family:monospace">ABC-123</div>',
+    'Your confirmation code is below.<div style="font-size:28px;letter-spacing:4px;'
+      + 'font-family:monospace">[...]</div>'],
   ];
   for (const [input, expected] of cases) assert.equal(redact(input), expected);
 });
@@ -97,13 +102,14 @@ test('redact leaves numbers without a keyword alone', () => {
   for (const t of [...MUST_SURVIVE, '<strong>010299</strong>', 'Raum 4711',
     'Bestellnummer 12345678', 'Message-ID: <18dde35b0d7fc70e.2bcdac6385e23e89@B250>',
     'Der Barcode 416107 auf dem Paket', 'Code: Bitte warten',
+    'Zip code: 10785', 'source code at commit a1b2c3d', 'QR-Code 416107',
     'Informationen und den benötigten Buchungscode schicke ich dir']) {
     assert.equal(redact(t), t, `wrongly masked: ${t}`);
   }
 });
 
 test('A keyword further away than the window masks nothing', () => {
-  const t = `Code${' '.repeat(60)}416107`;
+  const t = `Code ${'filler '.repeat(8)}416107`;
   assert.equal(redact(t), t);
 });
 
@@ -139,6 +145,11 @@ test('A real 2FA mail loses only its code', () => {
   ].join('\n');
   const out = redact(mail);
   assert.equal(out, mail.replace('882199', '[...]'));
+});
+
+test('A sign-in subject marks a 2FA mail', () => {
+  const mail = 'From: Slack <no-reply@slack.com>\nSubject: Sign in to Slack\n\nhere: ABC-123';
+  assert.ok(!redact(mail).includes('ABC-123'));
 });
 
 test('A 2FA sender is enough, even without a keyword in the body', () => {
